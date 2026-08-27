@@ -1,0 +1,28 @@
+{
+  "extends": [
+    "next/core-web-vitals",
+    "plugin:react-hooks/recommended",
+    "plugin:jest/recommended",
+    "plugin:testing-library/react"
+  ],
+  "rules": {
+    "react/no-unescaped-entities": "off",
+    "@next/next/no-img-element": "off",
+    "react/no-unused-prop-types": "off",
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "no-console": ["warn", { "allow": ["warn", "error"] }]
+  },
+  "plugins": [
+    "react-hooks",
+    "jest",
+    "testing-library"
+  ],
+  "settings": {
+    "react": {
+      "version": "18"
+    },
+    "jest": {
+      "version": 29
+    }
+  }
+}

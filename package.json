@@ -1,0 +1,21 @@
+{
+  "name": "study-studio",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Study Studio monorepo - AI-powered lesson generator desktop app (Tauri + Next.js) and mobile companion app (Expo).",
+  "scripts": {
+    "install:desktop": "npm install --prefix apps/desktop",
+    "install:mobile": "npm install --prefix apps/mobile",
+    "build:desktop": "npm run build:prod --prefix apps/desktop",
+    "dev:desktop": "npm run dev --prefix apps/desktop",
+    "test:desktop": "npm test --prefix apps/desktop",
+    "typecheck:desktop": "npm run typecheck --prefix apps/desktop",
+    "typecheck:mobile": "npm run typecheck --prefix apps/mobile",
+    "lint:desktop": "npm run lint --prefix apps/desktop",
+    "tauri:dev": "npm run tauri:dev --prefix apps/desktop",
+    "tauri:build": "npm run tauri:build --prefix apps/desktop"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  }
+}

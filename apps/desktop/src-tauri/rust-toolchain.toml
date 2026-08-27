@@ -1,0 +1,9 @@
+# Pinned to Rust 1.96.0 because Rust 1.97.1 (released 2026-07-14) tightened
+# macro namespace resolution rules, which breaks the #[tauri::command] macro
+# in tauri-macros 2.6.3 (Tauri 2.11.5) — it generates `__cmd__*` symbols both
+# as macro_rules definitions and as `use` re-imports, which now collide with
+# E0255. An upstream Tauri patch is pending; when it lands, this pin can be
+# removed and the toolchain bumped to stable.
+[toolchain]
+channel = "1.96.0"
+profile = "minimal"

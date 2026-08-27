@@ -1,0 +1,17 @@
+﻿node_modules/
+.next/
+dist/
+out/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.local
+.env.*.local
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/releases/
+*.mp3
+*.mp4
+*.zip
+.vscode/
+.idea/

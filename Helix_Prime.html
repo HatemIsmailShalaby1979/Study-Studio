@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Study Studio — v0.2.0</title>
+  <meta name="description" content="Study Studio is a local-first AI learning application — the learning engine behind Helix Prime and Helix Education. Latest release: v0.1.0 for Windows x64.">
+  <style>
+    :root{--bg:#070b14;--card:#0c1220;--muted:#9aa6d9;--text:#f5f7ff;--accent:#7c8bff;--border:rgba(255,255,255,.08)}*{box-sizing:border-box;margin:0;padding:0}body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);line-height:1.65}.container{max-width:1000px;margin:auto;padding:30px 24px 56px}header{display:flex;justify-content:space-between;align-items:center;gap:18px}.logo{font-weight:800}.logo span{color:var(--accent)}nav a{color:var(--muted);text-decoration:none;margin-left:16px}.hero{padding:82px 0 58px}.kicker{color:var(--accent);font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.12em}h1{font-size:clamp(2.5rem,6vw,4.7rem);line-height:1.05;max-width:820px;margin-top:16px}.lead{color:var(--muted);font-size:1.12rem;max-width:760px;margin-top:20px}section{border-top:1px solid var(--border);padding:48px 0}h2{margin-top:12px;font-size:2rem}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:24px}.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:22px}.card p,.card li{color:var(--muted)}ul{padding-left:20px;margin-top:10px}li+li{margin-top:6px}.status{border-left:3px solid var(--accent);padding-left:15px;color:var(--muted);margin-top:20px}.downloads{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}.button{display:inline-block;text-decoration:none;padding:10px 15px;border-radius:9px;background:var(--accent);color:var(--bg);font-weight:700}.button.alt{border:1px solid var(--border);background:var(--card);color:var(--text)}pre{background:#080d19;color:var(--text);padding:16px;border-radius:9px;margin-top:14px;white-space:pre-wrap}footer{color:var(--muted);padding-top:28px}@media(max-width:700px){header{align-items:flex-start;flex-direction:column}nav a{margin:0 14px 0 0}.grid{grid-template-columns:1fr}.hero{padding-top:54px}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header><div class="logo">Study <span>Studio</span></div><nav><a href="#features">Features</a><a href="#release">Release</a><a href="#helix">Helix</a><a href="#setup">Setup</a></nav></header>
+    <main>
+      <section class="hero" style="border-top:0"><div class="kicker">Local AI learning</div><h1>Lessons, quizzes, glossaries, and podcasts from your study material.</h1><p class="lead">Study Studio is local-first and multi-provider: it runs through Ollama, LM Studio, or any OpenAI-compatible local server, with optional online providers, and Piper TTS for speech. It is the learning engine behind Helix Prime and Helix Education. Latest release: v0.1.0 for Windows x64; v0.2.0 is in development.</p></section>
+      <section id="features"><div class="kicker">Features</div><h2>Built around local generation</h2><div class="grid"><article class="card"><h3>Lessons and quizzes</h3><p>Turn a topic or study material into structured learning content.</p></article><article class="card"><h3>Podcasts and voices</h3><p>Generate podcasts with four real voices, including Arabic (Jordanian).</p></article><article class="card"><h3>On-demand export</h3><p>Create MP3 or WAV audio files when requested.</p></article><article class="card"><h3>Multi-provider runtime</h3><p>Auto-detects local runtimes (Ollama, LM Studio, LocalAI, vLLM, LiteLLM, FastChat) and optional online providers (OpenAI, OpenRouter), with a live provider selector on the Generate page.</p></article></div></section>
+      <section id="release"><div class="kicker">Current status</div><h2>v0.2.0 in development · v0.1.0 released</h2><p class="status">v0.1.0 ships NSIS, MSI, and portable installers for Windows x64 and requires a local AI runtime plus at least one chat model. v0.2.0 adds the multi-provider AI Runtime and a CORS-free desktop transport, so any local server works regardless of its CORS configuration. Piper TTS and ffmpeg are optional for audio export; MP3 export requires ffmpeg.</p><div class="downloads"><a class="button" href="https://github.com/HatemShelby/study-studio/releases/download/v0.1.0/study-studio_0.1.0_x64-setup.exe">NSIS installer</a><a class="button alt" href="https://github.com/HatemShelby/study-studio/releases/download/v0.1.0/study-studio_0.1.0_x64_en-US.msi">MSI package</a><a class="button alt" href="https://github.com/HatemShelby/study-studio/releases/download/v0.1.0/study-studio_0.1.0_x64.exe">Portable executable</a></div></section>
+      <section id="helix"><div class="kicker">The Helix ecosystem</div><h2>Learning engine for Helix Prime and Helix Education</h2><p class="status">Study Studio is a standalone, independently versioned repository that powers the Helix platform: <strong>Helix Prime</strong> uses it as its AI lesson, quiz, and podcast generation engine, and <strong>Helix Education</strong> consumes its quiz and evaluation event stream. Study Studio stays separate so it can be versioned and released on its own.</p></section>
+      <section id="setup"><div class="kicker">Development setup</div><h2>Run the applications</h2><div class="grid"><div class="card"><h3>Desktop</h3><pre>cd apps/desktop
+npm install
+npm run tauri:dev</pre></div><div class="card"><h3>Mobile</h3><pre>cd apps/mobile
+npm install
+npm start</pre></div></div></section>
+    </main>
+    <footer>Study Studio — <a href="https://github.com/HatemShelby/study-studio" style="color:var(--accent)">repository</a></footer>
+  </div>
+</body>
+</html>

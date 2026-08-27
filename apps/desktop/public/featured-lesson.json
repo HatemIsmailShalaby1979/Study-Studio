@@ -1,0 +1,110 @@
+{
+  "id": "lesson-studio-intro",
+  "title": "Study Studio: Your Offline AI Learning Companion",
+  "type": "lesson",
+  "difficulty": "intermediate",
+  "createdAt": "2026-07-31T00:00:00.000Z",
+  "sections": [
+    {
+      "heading": "What is Study Studio?",
+      "content": "Study Studio is a desktop application that generates rich educational content using AI models that run on your own machine. It is built around Ollama, a local LLM runner, so the default experience is fully offline: structured lessons, conversational podcasts, quizzes, and glossaries are generated on-device with no cloud APIs, no subscriptions, and no internet dependency. When you use a local model, no data ever leaves your computer and there are no recurring API costs. The app also supports OpenAI-compatible endpoints as an option, so you can choose your own inference provider if you prefer a remote service. This makes it ideal for students, professionals, and anyone who wants full control over their learning data."
+    },
+    {
+      "heading": "The Two Content Modes",
+      "content": "Study Studio supports two primary generation modes. Lesson Mode produces structured educational content with titled sections, a glossary of key terms, and a quiz to test understanding. Podcast Mode generates a two-host conversational script - Host A explains concepts while Host B asks questions and reacts - which the app then reads aloud using text-to-speech. Both modes let you choose between beginner, intermediate, and expert difficulty levels, so the depth of the generated material adapts to your needs. You can paste study material directly or type a topic, and the app builds comprehensive content from either input."
+    },
+    {
+      "heading": "Local AI with Ollama",
+      "content": "The intelligence behind Study Studio comes from Ollama, a local LLM runner. Ollama allows you to pull and run open-source models like Gemma 3 12B, Qwen3, Llama 3.2, and others directly on your hardware. Study Studio sends generation requests to the local Ollama server at localhost:11434, which means your prompts and learning material are processed entirely on-device. This eliminates third-party data sharing, avoids API cost surprises, and works even without an internet connection once models are downloaded. In addition to Ollama, the app can connect to any OpenAI-compatible endpoint, letting you choose between fully local inference and a remote service you control. The app detects available models automatically and selects the best one, with a fallback chain if the primary model is unavailable."
+    },
+    {
+      "heading": "Quiz System with AI Evaluation",
+      "content": "Every generated lesson includes a quiz with multiple-choice questions, correct answers, and detailed explanations. Study Studio goes beyond simple grading: the quiz evaluation feature uses the local AI to assess your answers and provide personalized feedback. It explains why an answer is correct or incorrect, identifies knowledge gaps, and recommends what to focus on next. Your quiz results are saved alongside the lesson so you can track your progress over time."
+    },
+    {
+      "heading": "Built-in Library and Persistence",
+      "content": "All generated content is stored in the built-in library using browser localStorage. Every lesson and podcast you create appears in the library with its title, type badge (podcast or lesson), creation date, quiz count, glossary term count, and section count. You can open any item, delete it, or clear the entire library. The app also ships with a featured podcast about Study Studio that auto-imports on first visit, demonstrating the podcast format out of the box."
+    },
+    {
+      "heading": "Text-to-Speech Playback",
+      "content": "Study Studio integrates the Web Speech API for audio playback. Lessons can be read aloud section by section, and podcasts play as a simulated two-host conversation using two distinct voices - a male voice for Host A and a female voice for Host B. The podcast player includes play, pause, skip, stop, speed, and pitch controls, with color-coded speaker bubbles that animate during playback. Because TTS runs in the browser, no external speech service or internet connection is required."
+    },
+    {
+      "heading": "Technology Stack",
+      "content": "Study Studio is built with Tauri v2 and Next.js 14. The frontend uses React with Tailwind CSS for a clean, modern interface with light and dark themes. The backend is written in Rust, which provides performance and memory efficiency. Tauri produces installers that are significantly smaller and lighter than traditional Electron apps, leading to faster startup and lower resource consumption. A companion mobile app (Expo React Native) is in development so you can continue learning on the go, connecting to the same local Ollama instance on your network."
+    },
+    {
+      "heading": "Why Local AI Matters",
+      "content": "Running AI locally offers three major advantages for learners. Privacy: your study material and personal data never leave your device. Cost: after downloading a model once, generation is free with no per-token fees. Reliability: the app works offline, with no dependence on service uptime or network latency. The future roadmap includes Metacognitive Memory for tracking learning progress, competency scoring, and adaptive learning paths that tailor content to your individual strengths and weaknesses - turning the app into a personalized learning coach."
+    }
+  ],
+  "glossary": [
+    { "term": "Ollama", "definition": "A local LLM runner that lets you run AI models on your own hardware without cloud APIs" },
+    { "term": "Tauri", "definition": "A lightweight framework for building desktop apps with web frontends and Rust backends" },
+    { "term": "Rust", "definition": "A systems programming language known for performance, safety, and memory efficiency" },
+    { "term": "Next.js", "definition": "A React framework for building web applications with server-side rendering" },
+    { "term": "localStorage", "definition": "Browser-based storage that persists data locally on your device" },
+    { "term": "Web Speech API", "definition": "Browser-native API for converting text to speech without external services" },
+    { "term": "Text-to-Speech (TTS)", "definition": "Technology that converts written text into spoken audio" },
+    { "term": "Metacognitive Memory", "definition": "A system that tracks learning patterns and adapts content to individual needs" },
+    { "term": "Privacy-first", "definition": "Design philosophy where user data never leaves the local device" }
+  ],
+  "quiz": [
+    {
+      "question": "What is the core value proposition of Study Studio?",
+      "options": [
+        "Cloud-based AI with a subscription model",
+        "100% offline operation with privacy-first design",
+        "Free trial with paid premium features",
+        "Social learning platform with user accounts"
+      ],
+      "correctIndex": 1,
+      "explanation": "Study Studio runs entirely offline with no cloud APIs, keeping all learning data local to your machine."
+    },
+    {
+      "question": "Which two content modes does Study Studio support?",
+      "options": ["Videos and Articles", "Lessons and Podcasts", "Flashcards and Mind Maps", "Quizzes and Surveys"],
+      "correctIndex": 1,
+      "explanation": "Study Studio generates structured Lessons (sections/glossary/quiz) and Podcasts (two-host scripts with TTS playback)."
+    },
+    {
+      "question": "What technology does Study Studio use for local AI inference?",
+      "options": ["TensorFlow Lite", "OpenAI API", "Ollama", "ONNX Runtime"],
+      "correctIndex": 2,
+      "explanation": "Study Studio uses Ollama to run AI models locally on your machine, eliminating the need for cloud APIs."
+    },
+    {
+      "question": "What desktop framework powers Study Studio?",
+      "options": ["Electron", "Qt", "Tauri v2", "Flutter"],
+      "correctIndex": 2,
+      "explanation": "Study Studio is built with Tauri v2, which is lighter than Electron while providing a Rust backend for performance."
+    },
+    {
+      "question": "How does the podcast TTS feature create the two-host conversation?",
+      "options": [
+        "Single voice with pitch modulation",
+        "Pre-recorded human voices",
+        "Dual voices using Web Speech API",
+        "AI-generated voice cloning"
+      ],
+      "correctIndex": 2,
+      "explanation": "The podcast player uses the Web Speech API to assign two different voices (one per host), creating a conversational feel."
+    },
+    {
+      "question": "Where is generated content stored?",
+      "options": ["A remote database", "Browser localStorage", "A local SQL file", "In the Ollama model store"],
+      "correctIndex": 1,
+      "explanation": "All generated lessons and podcasts are saved in browser localStorage under the study-studio-library key."
+    },
+    {
+      "question": "What is the default AI model used by Study Studio?",
+      "options": ["gemma3:12b", "GPT-4", "Claude", "gpt-3.5-turbo"],
+      "correctIndex": 0,
+      "explanation": "Study Studio defaults to the local gemma3:12b model and falls back to other available Ollama models."
+    }
+  ],
+  "totalWords": 1150,
+  "estimatedMinutes": 8,
+  "sectionCount": 8,
+  "audioFile": null
+}
