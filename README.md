@@ -1,65 +1,24 @@
 # Study Studio
 
-Study Studio is a local AI learning application that turns topics or study material into structured lessons, quizzes, glossaries, and podcasts.
+A local AI learning application that turns topics or study material into structured lessons, quizzes, glossaries, and podcasts. Runs entirely on your machine — no cloud API keys required.
 
-**Study Studio is the learning engine behind the [Helix Prime](#helix-prime--helix-education) platform and [Helix Education](#helix-prime--helix-education).** It remains a **separate, independently versioned repository** that those products consume as their AI-learning core.
+**Study Studio is the learning engine behind the [Helix Prime](https://github.com/HatemIsmailShalaby1979/Helix-Prime) platform and [Helix Education](https://github.com/HatemIsmailShalaby1979/Helix-Education).** It remains a separate, independently versioned repository.
 
-## Current status
+## Quick Start
 
-Study Studio **v0.2.0** is the current development version. The latest published release remains **v0.1.0** for Windows x64 with NSIS, MSI, and portable installers.
+### Web preview (no Tauri required)
 
-The desktop app is **local-first and multi-provider**. Generation runs against any detected runtime:
+```bash
+cd apps/desktop
+npm install
+npm run dev
+```
 
-- **Local:** Ollama (`:11434`), LM Studio (`:1234`), LocalAI, vLLM, LiteLLM, FastChat — any OpenAI-compatible `/v1` server.
-- **Online (optional):** OpenAI and OpenRouter, gated behind a stored API key.
+Opens at **http://localhost:3000** — full UI available in the browser.
 
-Requests from the desktop shell are routed through the Rust backend (`tauri-plugin-http`), so the app works with **any** local server regardless of its CORS policy — no server-side CORS configuration required. Speech is generated locally through Piper TTS.
+### Desktop app (Tauri)
 
-The repository contains desktop (Tauri) and mobile (Expo) applications in one monorepo.
-
-## What it does
-
-- Generates structured lessons, quizzes, glossaries, and podcasts from a topic or study material.
-- Auto-detects local runtimes and lists their models; a provider selector on the Generate page switches between them live.
-- Creates audio on demand and exports MP3 or WAV files.
-- Provides four real voices, including Arabic (Jordanian).
-- Keeps the selected model pinned for the session.
-- Supports desktop and mobile applications in one repository.
-
-## Tech stack
-
-- Multi-provider AI runtime: Ollama + any OpenAI-compatible `/v1` server (LM Studio, LocalAI, vLLM, LiteLLM, FastChat), plus OpenAI and OpenRouter for online use
-- CORS-free desktop transport via `tauri-plugin-http` (requests served by the Rust backend)
-- Piper TTS for local speech generation
-- Tauri desktop application
-- Expo mobile application
-- Windows x64 installers: NSIS, MSI, and portable
-- MP3 and WAV audio export
-
-## Helix Prime & Helix Education
-
-Study Studio is developed as its own repository and shipped as its own product.
-
-- **Helix Prime** — the metacognitive learning platform; uses Study Studio as its AI lesson/quiz/podcast generation engine.
-- **Helix Education** — the evaluation and telemetry layer; consumes Study Studio's quiz and evaluation event stream (`helixEvents.ts`, matching the Helix Education `state_core` contract).
-
-These products depend on Study Studio. Study Studio does **not** depend on them — it stays standalone so it can be versioned and released independently. Governed by [Constitution 000](constitution.me) and the [Helix Engineering Constitution](docs/HELIX_CONSTITUTION.md).
-
-## Windows release
-
-v0.1.0 installers are available from GitHub Releases:
-
-| Download | Type |
-| --- | --- |
-| [Setup executable](https://github.com/HatemShelby/study-studio/releases/download/v0.1.0/study-studio_0.1.0_x64-setup.exe) | NSIS installer |
-| [MSI package](https://github.com/HatemShelby/study-studio/releases/download/v0.1.0/study-studio_0.1.0_x64_en-US.msi) | Windows Installer |
-| [Portable executable](https://github.com/HatemShelby/study-studio/releases/download/v0.1.0/study-studio_0.1.0_x64.exe) | Portable build |
-
-Ollama must be installed and running with at least one chat model pulled. Piper TTS and ffmpeg are optional for audio export; MP3 export requires ffmpeg.
-
-## Development setup
-
-### Desktop
+Requires [Rust toolchain](https://rustup.rs) installed:
 
 ```bash
 cd apps/desktop
@@ -67,29 +26,64 @@ npm install
 npm run tauri:dev
 ```
 
-Build the Windows application with:
+### Prerequisites for AI generation
+
+Study Studio needs a local AI runtime to generate content. Install one:
+
+- [Ollama](https://ollama.com) — recommended, runs on `localhost:11434`
+- [LM Studio](https://lmstudio.ai) — runs on `localhost:1234`
+- Any OpenAI-compatible `/v1` server
+
+Pull a model if using Ollama:
 
 ```bash
-npm run tauri:build
+ollama pull gemma3:12b
 ```
 
-### Mobile
+### Optional: Audio export
 
-```bash
-cd apps/mobile
-npm install
-npm start
-```
+For podcast/lesson audio, install:
+
+- [Piper TTS](https://github.com/rhasspy/piper) — local text-to-speech
+- [ffmpeg](https://ffmpeg.org) — required for MP3 export
+
+## What it does
+
+- Generates structured lessons, quizzes, glossaries, and podcasts from a topic
+- Auto-detects local AI runtimes and lists available models
+- Creates audio on demand and exports MP3 or WAV files
+- Provides four real voices, including Arabic (Jordanian)
+- Desktop (Tauri + Next.js) and mobile (Expo) in one monorepo
+
+## Tech stack
+
+- Multi-provider AI runtime: Ollama, LM Studio, any OpenAI-compatible server
+- CORS-free desktop transport via `tauri-plugin-http`
+- Piper TTS for local speech generation
+- Next.js 14 frontend
+- Tauri desktop application
+- Expo mobile application
+
+## Windows installers
+
+v0.1.0 installers are available from [GitHub Releases](https://github.com/HatemIsmailShalaby1979/Study-Studio/releases/tag/v0.1.0):
+
+| Download | Type |
+| --- | --- |
+| Setup executable | NSIS installer |
+| MSI package | Windows Installer |
+| Portable executable | No install required |
+
+Requires Ollama running with at least one chat model pulled.
 
 ## Repository layout
 
 ```text
-apps/desktop/  Tauri desktop application
+apps/desktop/  Next.js + Tauri desktop application
 apps/mobile/   Expo mobile application
 docs/          Project documentation
-releases/      Windows release files
 ```
 
-Study Studio shipped as a real v0.1.0 release and is now developed as v0.2.0. Future changes should preserve its local-first behavior and honest status reporting.
+Study Studio shipped as v0.1.0 and is now developed as v0.2.0.
 
-Part of the Helix engineering ecosystem — see [Helix Prime & Helix Education](#helix-prime--helix-education).
+Part of a larger body of work — see [Hatem Shalaby's profile](https://github.com/HatemIsmailShalaby1979) for the full story.
