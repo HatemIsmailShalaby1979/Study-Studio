@@ -4,7 +4,8 @@ Local AI tutor that turns any topic into lessons, quizzes, glossaries, and podca
 
 ## What it actually does
 
-Feed it a topic ? \"photosynthesis,\" \"Spanish subjunctive,\" \"how transformers work\" ? and it generates:
+Feed it a topic — "photosynthesis," "Spanish subjunctive," "how transformers work" — and it generates:
+
 - Structured lessons with sections and explanations
 - Quiz questions with explanations
 - Glossaries with definitions
@@ -13,36 +14,37 @@ Feed it a topic ? \"photosynthesis,\" \"Spanish subjunctive,\" \"how transformer
 
 ## Run it in your browser (easiest)
 
-`ash
+```bash
 cd apps/desktop
 npm install
 npm run dev
-`
+```
 
-Opens at http://localhost:3000. Full UI, no Rust needed.
+Opens at `http://localhost:3000`. Full UI, no Rust needed.
 
 ## Build the desktop app
 
 Needs [Rust](https://rustup.rs):
 
-`ash
+```bash
 cd apps/desktop
 npm install
 npm run tauri:dev
-`
+```
 
 ## You need a local AI runtime
 
 Pick one:
-- **Ollama** (recommended) ? ollama pull gemma3:12b runs on localhost:11434
-- **LM Studio** ? runs on localhost:1234
-- Any OpenAI-compatible /v1 endpoint
+
+- **Ollama** (recommended) — `ollama pull gemma3:12b` runs on `localhost:11434`
+- **LM Studio** — runs on `localhost:1234`
+- Any OpenAI-compatible `/v1` endpoint
 
 For audio: install [Piper TTS](https://github.com/rhasspy/piper) and [ffmpeg](https://ffmpeg.org).
 
 ## Why I built this
 
-I wanted a tutor that works offline, respects privacy, and doesn't cost /month. Also wanted to learn Tauri and see if local models are good enough for real learning (they are, mostly).
+I wanted a tutor that works offline, respects privacy, and doesn't cost $20/month. Also wanted to learn Tauri and see if local models are good enough for real learning (they are, mostly).
 
 ## Stack
 
