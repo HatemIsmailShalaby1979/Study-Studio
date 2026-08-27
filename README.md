@@ -1,89 +1,63 @@
 # Study Studio
 
-A local AI learning application that turns topics or study material into structured lessons, quizzes, glossaries, and podcasts. Runs entirely on your machine — no cloud API keys required.
+Local AI tutor that turns any topic into lessons, quizzes, glossaries, and podcasts. No cloud. No API keys. Runs on your machine.
 
-**Study Studio is the learning engine behind the [Helix Prime](https://github.com/HatemIsmailShalaby1979/Helix-Prime) platform and [Helix Education](https://github.com/HatemIsmailShalaby1979/Helix-Education).** It remains a separate, independently versioned repository.
+## What it actually does
 
-## Quick Start
+Feed it a topic ? \"photosynthesis,\" \"Spanish subjunctive,\" \"how transformers work\" ? and it generates:
+- Structured lessons with sections and explanations
+- Quiz questions with explanations
+- Glossaries with definitions
+- Podcast scripts (two voices, Arabic + English available)
+- Audio exports (MP3/WAV) via local TTS
 
-### Web preview (no Tauri required)
+## Run it in your browser (easiest)
 
-```bash
+`ash
 cd apps/desktop
 npm install
 npm run dev
-```
+`
 
-Opens at **http://localhost:3000** — full UI available in the browser.
+Opens at http://localhost:3000. Full UI, no Rust needed.
 
-### Desktop app (Tauri)
+## Build the desktop app
 
-Requires [Rust toolchain](https://rustup.rs) installed:
+Needs [Rust](https://rustup.rs):
 
-```bash
+`ash
 cd apps/desktop
 npm install
 npm run tauri:dev
-```
+`
 
-### Prerequisites for AI generation
+## You need a local AI runtime
 
-Study Studio needs a local AI runtime to generate content. Install one:
+Pick one:
+- **Ollama** (recommended) ? ollama pull gemma3:12b runs on localhost:11434
+- **LM Studio** ? runs on localhost:1234
+- Any OpenAI-compatible /v1 endpoint
 
-- [Ollama](https://ollama.com) — recommended, runs on `localhost:11434`
-- [LM Studio](https://lmstudio.ai) — runs on `localhost:1234`
-- Any OpenAI-compatible `/v1` server
+For audio: install [Piper TTS](https://github.com/rhasspy/piper) and [ffmpeg](https://ffmpeg.org).
 
-Pull a model if using Ollama:
+## Why I built this
 
-```bash
-ollama pull gemma3:12b
-```
+I wanted a tutor that works offline, respects privacy, and doesn't cost /month. Also wanted to learn Tauri and see if local models are good enough for real learning (they are, mostly).
 
-### Optional: Audio export
+## Stack
 
-For podcast/lesson audio, install:
-
-- [Piper TTS](https://github.com/rhasspy/piper) — local text-to-speech
-- [ffmpeg](https://ffmpeg.org) — required for MP3 export
-
-## What it does
-
-- Generates structured lessons, quizzes, glossaries, and podcasts from a topic
-- Auto-detects local AI runtimes and lists available models
-- Creates audio on demand and exports MP3 or WAV files
-- Provides four real voices, including Arabic (Jordanian)
-- Desktop (Tauri + Next.js) and mobile (Expo) in one monorepo
-
-## Tech stack
-
-- Multi-provider AI runtime: Ollama, LM Studio, any OpenAI-compatible server
-- CORS-free desktop transport via `tauri-plugin-http`
-- Piper TTS for local speech generation
 - Next.js 14 frontend
-- Tauri desktop application
-- Expo mobile application
+- Tauri for desktop
+- Expo for mobile (same monorepo)
+- Ollama / LM Studio / any OpenAI-compatible for inference
+- Piper TTS for local speech
 
-## Windows installers
+## Status
 
-v0.1.0 installers are available from [GitHub Releases](https://github.com/HatemIsmailShalaby1979/Study-Studio/releases/tag/v0.1.0):
+**Actively used by me.** Desktop builds work. Mobile needs more love. Audio export works if you set up Piper.
 
-| Download | Type |
-| --- | --- |
-| Setup executable | NSIS installer |
-| MSI package | Windows Installer |
-| Portable executable | No install required |
+Part of the Helix ecosystem: powers learning in [Helix Prime](https://github.com/HatemIsmailShalaby1979/Helix-Prime) and [Helix Education](https://github.com/HatemIsmailShalaby1979/Helix-Education).
 
-Requires Ollama running with at least one chat model pulled.
+## License
 
-## Repository layout
-
-```text
-apps/desktop/  Next.js + Tauri desktop application
-apps/mobile/   Expo mobile application
-docs/          Project documentation
-```
-
-Study Studio shipped as v0.1.0 and is now developed as v0.2.0.
-
-Part of a larger body of work — see [Hatem Shalaby's profile](https://github.com/HatemIsmailShalaby1979) for the full story.
+MIT
