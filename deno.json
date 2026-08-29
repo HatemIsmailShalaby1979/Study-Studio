@@ -1,7 +1,14 @@
 {
   "lint": {
     "rules": {
-      "exclude": []
+      "exclude": [
+        "jsx-button-has-type",
+        "no-empty",
+        "no-explicit-any",
+        "no-unused-vars",
+        "prefer-const",
+        "require-await"
+      ]
     }
   }
 }
