@@ -1,64 +1,54 @@
 # Study Studio
 
-Local AI tutor that turns any topic into lessons, quizzes, glossaries, and podcasts. No cloud. No API keys. Runs on your machine.
+> **A local AI tutor for lessons, quizzes, glossaries, podcasts, and audio learning.**
 
-## What it actually does
+Study Studio is a privacy-first learning application that runs with local model runtimes such as Ollama or LM Studio. It turns a topic into structured learning material while keeping the user in control of the local environment.
 
-Feed it a topic — "photosynthesis," "Spanish subjunctive," "how transformers work" — and it generates:
+## What it does
 
-- Structured lessons with sections and explanations
-- Quiz questions with explanations
-- Glossaries with definitions
-- Podcast scripts (two voices, Arabic + English available)
-- Audio exports (MP3/WAV) via local TTS
-
-## Run it in your browser (easiest)
-
-```bash
-cd apps/desktop
-npm install
-npm run dev
-```
-
-Opens at `http://localhost:3000`. Full UI, no Rust needed.
-
-## Build the desktop app
-
-Needs [Rust](https://rustup.rs):
-
-```bash
-cd apps/desktop
-npm install
-npm run tauri:dev
-```
-
-## You need a local AI runtime
-
-Pick one:
-
-- **Ollama** (recommended) — `ollama pull gemma3:12b` runs on `localhost:11434`
-- **LM Studio** — runs on `localhost:1234`
-- Any OpenAI-compatible `/v1` endpoint
-
-For audio: install [Piper TTS](https://github.com/rhasspy/piper) and [ffmpeg](https://ffmpeg.org).
-
-## Why I built this
-
-I wanted a tutor that works offline, respects privacy, and doesn't cost $20/month. Also wanted to learn Tauri and see if local models are good enough for real learning (they are, mostly).
-
-## Stack
-
-- Next.js 14 frontend
-- Tauri for desktop
-- Expo for mobile (same monorepo)
-- Ollama / LM Studio / any OpenAI-compatible for inference
-- Piper TTS for local speech
+- Structured lessons with explanations
+- Quiz questions with feedback
+- Glossaries and definitions
+- Bilingual podcast scripts
+- Local audio exports through TTS
+- Desktop and browser-oriented workflows
 
 ## Status
 
-**Actively used by me.** Desktop builds work. Mobile needs more love. Audio export works if you set up Piper.
+**Actively used personal product; local-first development.**
 
-Part of the Helix ecosystem: powers learning in [Helix Prime](https://github.com/HatemIsmailShalaby1979/Helix-Prime) and [Helix Education](https://github.com/HatemIsmailShalaby1979/Helix-Education).
+- Desktop workflow is functional
+- Audio export works when Piper TTS is configured
+- Mobile experience remains unfinished
+- Local model runtime is required for generation
+- No production SaaS or universal learning claim is made
+
+## Run in the browser
+
+    cd apps/desktop
+    npm install
+    npm run dev
+
+Open http://localhost:3000.
+
+## Local model options
+
+- Ollama — recommended
+- LM Studio
+- Any OpenAI-compatible local endpoint
+
+For audio, install Piper TTS and ffmpeg.
+
+## Why it matters to Helix Codex
+
+Study Studio is the user-facing learning layer in the Helix ecosystem. It explores how knowledge can be generated, practiced, remembered, and improved locally—without making privacy or affordability afterthoughts.
+
+## Related projects
+
+- [Helix Prime](https://github.com/HatemIsmailShalaby1979/Helix-Prime)
+- [Helix Education](https://github.com/HatemIsmailShalaby1979/Helix-Education)
+- [L&D Command Center](https://github.com/HatemIsmailShalaby1979/L-D-Command-Center)
+- [Portfolio](https://github.com/HatemIsmailShalaby1979/HatemIsmailShalaby1979)
 
 ## License
 
