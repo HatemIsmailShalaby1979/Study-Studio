@@ -1,48 +1,52 @@
 # Contributing to Study Studio
 
-> **This project is governed by [Constitution 000](../../constitution.me) — our single source of truth.**
-> Every contribution must answer the Constitution's questions:
-> - **Why is this necessary?** — the capability must justify its existence.
-> - **What responsibility do I hold?** — every designation must clarify its role.
-> - **What assumptions have been introduced?** — every decision must reveal its assumptions.
->
-> "Never rely on borrowed conviction; earn genuine conviction through deep understanding."
+This project is governed by [Constitution 000](../../constitution.me). Before contributing, read it.
 
-## Principles
+## What we need
 
-1. **Truth is paramount.** Do not add code, features, or abstractions you do not understand. If you cannot explain why something is necessary, it does not belong.
-2. **Architecture is the expression of truth.** Code structure reflects understanding. If the understanding is unclear, the architecture will be too.
-3. **Quality is the effective realisation of truth.** Tests, types, and validation are not overhead — they are the mechanisms by which truth is verified.
-4. **Document enduring knowledge.** Every discussion that generates lasting insight must be recorded as an artifact. Memory must outlive the conversation.
+- Bug reports with reproduction steps
+- Test coverage for new features
+- Documentation that corrects stale claims
+- Honest assessments of what works and what doesn't
 
-## Development Setup
+We don't need:
+- Features that solve problems nobody has
+- Documentation that repeats what the code already says
+- Changes without test coverage
 
-1. **Clone the repo**
-2. **Install dependencies**: `npm install`
-3. **Install Rust** (if building desktop app):
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   ```
-4. **Pull AI models**: `npm run ollama:pull`
-5. **Start Ollama**: `ollama serve`
-6. **Start dev server**: `npm run dev`
+## Setup
 
-## Code Style
+```bash
+cd apps/desktop
+npm install
+npm run dev
+```
+
+Opens at http://localhost:3000.
+
+For the desktop app (Tauri):
+```bash
+npm run tauri:dev
+```
+
+## Code style
 
 - TypeScript strict mode
 - ESLint + Prettier
-- Follow existing patterns in the codebase
+- Follow existing patterns
 - All new files must include proper TypeScript types
 
-## Pull Request Process
+## Tests
 
-1. Ensure all tests pass: `npm test`
-2. Run typecheck: `npm run typecheck`
-3. Run lint: `npm run lint`
-4. Update documentation if changing APIs
-5. Update tests for new features
+```bash
+npm test           # jest
+npm run typecheck  # tsc --noEmit
+npm run lint       # next lint
+```
 
-## Git Commit Format
+All tests must pass before a PR.
+
+## Commits
 
 ```
 type(scope): description
@@ -53,28 +57,27 @@ fix(evaluate): handle empty quiz submission
 docs(readme): update API documentation
 ```
 
-## Project Structure
+Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+
+## Project structure
 
 ```
 src/
   app/          — Next.js app router pages and API routes
   components/   — React components
-  lib/          — Utilities (ollama client, validation, errors)
-  types.ts      — Shared TypeScript types
-src-tauri/      — Tauri v2 Rust backend
+  lib/          — Utilities and API clients
+types.ts       — TypeScript type definitions
+src-tauri/     — Tauri v2 Rust backend
 docs/           — Documentation
 tests/          — Test files
 ```
 
-## Architecture
+## Security
 
-- Frontend calls Next.js API routes (`/api/*`)
-- API routes call local Ollama instance (`http://localhost:11434`)
-- Desktop app (Tauri) manages Ollama as a sidecar process
-- No external API dependencies — 100% offline
+- Never commit API keys or secrets
+- Use environment variables for configuration
+- Report security issues privately
 
-## Testing
+## Thank you
 
-- Unit tests via Jest + React Testing Library
-- Run `npm test` before submitting PRs
-- Add tests for new components and API routes
+Your contributions make this project better. We review every PR carefully.
