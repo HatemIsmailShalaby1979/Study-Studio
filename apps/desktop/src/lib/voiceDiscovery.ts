@@ -23,9 +23,9 @@ export interface DiscoveredVoice {
 
 /** Discover voices from the Web Speech API (browser + OS-native engines). */
 export function discoverWebSpeechVoices(): DiscoveredVoice[] {
-  if (typeof window === "undefined" || !window.speechSynthesis) return [];
+  if (typeof window === "undefined" || !globalThis.speechSynthesis) return [];
   try {
-    const voices = window.speechSynthesis.getVoices();
+    const voices = globalThis.speechSynthesis.getVoices();
     return voices.map((v) => ({
       id: `ws:${v.name}`,
       displayName: `${v.name} (${v.lang})`,

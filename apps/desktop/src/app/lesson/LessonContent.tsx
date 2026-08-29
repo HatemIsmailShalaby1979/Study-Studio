@@ -96,8 +96,8 @@ export default function LessonPage() {
   useEffect(() => {
     if (!lesson) return;
     const handleScroll = () => {
-      const scrollTop = window.scrollY;
-      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const scrollTop = globalThis.scrollY;
+      const docHeight = document.documentElement.scrollHeight - globalThis.innerHeight;
       setProgress(docHeight > 0 ? Math.min((scrollTop / docHeight) * 100, 100) : 0);
       sectionRefs.current.forEach((ref, i) => {
         if (ref) {
@@ -106,8 +106,8 @@ export default function LessonPage() {
         }
       });
     };
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
+    globalThis.addEventListener("scroll", handleScroll);
+    return () => globalThis.removeEventListener("scroll", handleScroll);
   }, [lesson]);
 
   const scrollToSection = (index: number) => {
@@ -205,8 +205,8 @@ export default function LessonPage() {
       e.preventDefault();
       e.returnValue = "";
     };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
+    globalThis.addEventListener("beforeunload", handler);
+    return () => globalThis.removeEventListener("beforeunload", handler);
   }, [pipeline.hasUnsavedAudio]);
 
   if (!lesson || !mounted) {

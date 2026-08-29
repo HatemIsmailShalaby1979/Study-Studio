@@ -22,9 +22,9 @@ export default function PodcastPlayer({ script, title, onClose }: Props) {
   const lineTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    synthRef.current = window.speechSynthesis;
+    synthRef.current = globalThis.speechSynthesis;
     const loadVoices = () => {
-      const available = window.speechSynthesis.getVoices();
+      const available = globalThis.speechSynthesis.getVoices();
       if (available.length > 0) {
         setVoices(available);
         const enVoices = available.filter((v) => v.lang.startsWith("en"));
@@ -41,10 +41,10 @@ export default function PodcastPlayer({ script, title, onClose }: Props) {
       }
     };
     loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
+    globalThis.speechSynthesis.onvoiceschanged = loadVoices;
     return () => {
       if (lineTimeoutRef.current) clearTimeout(lineTimeoutRef.current);
-      window.speechSynthesis.cancel();
+      globalThis.speechSynthesis.cancel();
     };
   }, []);
 

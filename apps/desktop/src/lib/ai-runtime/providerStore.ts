@@ -33,9 +33,9 @@ type ProviderConfigMap = Record<string, ProviderConfig>;
 let cache: ProviderConfigMap = load();
 
 function load(): ProviderConfigMap {
-  if (typeof window === "undefined" || !window.localStorage) return {};
+  if (typeof window === "undefined" || !globalThis.localStorage) return {};
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = globalThis.localStorage.getItem(STORAGE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? (parsed as ProviderConfigMap) : {};
@@ -45,9 +45,9 @@ function load(): ProviderConfigMap {
 }
 
 function persist(): void {
-  if (typeof window === "undefined" || !window.localStorage) return;
+  if (typeof window === "undefined" || !globalThis.localStorage) return;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
+    globalThis.localStorage.setItem(STORAGE_KEY, JSON.stringify(cache));
   } catch {
     // Quota / privacy mode — state still lives in-memory for this session.
   }

@@ -20,9 +20,9 @@ export default function AudioPlayer({ sections, title, onClose }: Props) {
   const synthRef = useRef<SpeechSynthesis | null>(null);
 
   useEffect(() => {
-    synthRef.current = window.speechSynthesis;
+    synthRef.current = globalThis.speechSynthesis;
     const loadVoices = () => {
-      const available = window.speechSynthesis.getVoices();
+      const available = globalThis.speechSynthesis.getVoices();
       if (available.length > 0) {
         setVoices(available);
         const preferred = available.find(
@@ -32,8 +32,8 @@ export default function AudioPlayer({ sections, title, onClose }: Props) {
       }
     };
     loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
-    return () => { window.speechSynthesis.cancel(); };
+    globalThis.speechSynthesis.onvoiceschanged = loadVoices;
+    return () => { globalThis.speechSynthesis.cancel(); };
   }, []);
 
   const speakSection = useCallback(

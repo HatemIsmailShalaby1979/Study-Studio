@@ -19,11 +19,11 @@ beforeEach(() => {
   Object.keys(store).forEach((k) => delete store[k]);
 
   // Wire jest.fn() stubs to our in-memory store
-  (window.localStorage.getItem as jest.Mock).mockImplementation((key: string) => store[key] ?? null);
-  (window.localStorage.setItem as jest.Mock).mockImplementation((key: string, value: string) => {
+  (globalThis.localStorage.getItem as jest.Mock).mockImplementation((key: string) => store[key] ?? null);
+  (globalThis.localStorage.setItem as jest.Mock).mockImplementation((key: string, value: string) => {
     store[key] = value;
   });
-  (window.localStorage.removeItem as jest.Mock).mockImplementation((key: string) => {
+  (globalThis.localStorage.removeItem as jest.Mock).mockImplementation((key: string) => {
     delete store[key];
   });
 });

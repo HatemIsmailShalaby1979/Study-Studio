@@ -202,7 +202,7 @@ export async function listInstalledLanguages(): Promise<string[]> {
 export async function isTtsAvailable(): Promise<boolean> {
   if (!isTauri()) {
     // Browser: Web Speech API is always "available" (OS-native).
-    return typeof window !== "undefined" && !!window.speechSynthesis;
+    return typeof window !== "undefined" && !!globalThis.speechSynthesis;
   }
   const voices = await discoverInstalledVoices();
   return voices.length > 0;
@@ -289,9 +289,9 @@ export interface UnifiedVoice {
 
 /** Discover voices from the Web Speech API (browser + OS-native engines). */
 function discoverWebSpeechVoices(): { id: string; displayName: string; lang: string; gender: "male" | "female" | "unknown" }[] {
-  if (typeof window === "undefined" || !window.speechSynthesis) return [];
+  if (typeof window === "undefined" || !globalThis.speechSynthesis) return [];
   try {
-    return window.speechSynthesis.getVoices().map((v) => ({
+    return globalThis.speechSynthesis.getVoices().map((v) => ({
       id: `ws:${v.name}`,
       displayName: `${v.name} (${v.lang})`,
       lang: v.lang.split("-")[0] ?? "en",
