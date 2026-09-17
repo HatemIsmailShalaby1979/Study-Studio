@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { v4 as uuidv4 } from "uuid";
 import { Lesson } from "@/types";
+import { loadLibrary } from "@/lib/libraryStore";
 import {
   loadJourneys,
   createJourney,
@@ -25,13 +25,17 @@ export default function Journeys() {
   useEffect(() => {
     setMounted(true);
     setJourneys(loadJourneys());
-    try {
-      const raw = localStorage.getItem("study-studio-library");
-      const lessons: Lesson[] = raw ? JSON.parse(raw) : [];
+    // IndexedDB-backed, hence async. See lib/libraryStore.ts.
+    let cancelled = false;
+    loadLibrary().then((lessons) => {
+      if (cancelled) return;
       const map: Record<string, Lesson> = {};
       lessons.forEach((l) => (map[l.id] = l));
       setLibrary(map);
-    } catch {}
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const refresh = () => setJourneys(loadJourneys());

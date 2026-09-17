@@ -50,7 +50,17 @@ export interface AIModel {
   id: string;
   name: string;
   size?: string;
+  /**
+   * Whether the model is resident in memory and ready to serve right now.
+   * `undefined` means the provider cannot tell. Local runtimes that separate
+   * "downloaded" from "loaded" (LM Studio, llama.cpp servers) must report this
+   * accurately — it is what drives load-on-demand.
+   */
   loaded?: boolean;
+  /** Maximum context window in tokens, when the provider reports it. */
+  contextWindow?: number;
+  /** Whether the model was trained for tool/function calling, when known. */
+  supportsTools?: boolean;
 }
 
 /** Rich per-model metadata (parameters, context window, tool support). */
@@ -59,6 +69,29 @@ export interface AIModelProfile {
   parameters: string;
   contextWindow: number;
   supportsTools: boolean;
+}
+
+/** Options for {@link AIProvider.loadModel}. Provider-specific fields are ignored. */
+export interface AIModelLoadOptions {
+  /** Context window to allocate. Omitted = the runtime's own default. */
+  contextLength?: number;
+  /** Enable Flash Attention when the backend supports it. */
+  flashAttention?: boolean;
+  /** How long to wait for the load to complete before giving up. */
+  timeoutMs?: number;
+}
+
+/** Outcome of a {@link AIProvider.loadModel} call. */
+export interface AIModelLoadResult {
+  modelId: string;
+  /** Whether the model is serving now. */
+  loaded: boolean;
+  /** Seconds the runtime reported for the load, when available. */
+  loadTimeSeconds?: number;
+  /** The context window actually applied, when the runtime echoes it back. */
+  contextLength?: number;
+  /** Human-readable note (e.g. why a load was skipped). */
+  message?: string;
 }
 
 /**
@@ -195,6 +228,28 @@ export interface AIProvider {
 
   /** Optional capability: install/pull a model by id. */
   pullModel?(modelId: string): Promise<void>;
+
+  /**
+   * Optional capability: make a model resident in memory.
+   *
+   * Providers whose runtime separates "downloaded" from "loaded" (LM Studio,
+   * llama.cpp servers) implement this so the app can load the user's selection
+   * on demand — the user never has to pre-load a model in the runtime's own UI.
+   *
+   * Must resolve once the model is actually serving. Idempotent: loading an
+   * already-loaded model succeeds without a second allocation. Implementations
+   * that cannot manage model lifecycle omit this method entirely.
+   */
+  loadModel?(modelId: string, options?: AIModelLoadOptions): Promise<AIModelLoadResult>;
+
+  /** Optional capability: release a model from memory. */
+  unloadModel?(modelId: string): Promise<void>;
+
+  /**
+   * Optional capability: report whether a specific model is resident.
+   * Returns `undefined` when the provider cannot tell.
+   */
+  isModelLoaded?(modelId: string): Promise<boolean | undefined>;
 
   /**
    * Optional mutator: inject a bearer key at runtime (hosted OpenAI-compatible

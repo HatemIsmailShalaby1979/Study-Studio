@@ -7,6 +7,8 @@ import {
   markQuizComplete,
   clearProgress,
   clearAllProgress,
+  getProgress,
+  getProgressMap,
 } from "@/lib/progress";
 
 function installStorageMock() {
@@ -80,27 +82,39 @@ describe("progress store", () => {
     clearAllProgress();
   });
 
+  // These assert through the public API rather than parsing the storage key.
+  // Payloads are versioned now ({ v, data }), so reading the raw value would be
+  // asserting the envelope instead of the behaviour.
+
   it("tracks access and upgrades not_started to in_progress", () => {
     markAccessed("lesson-1");
-    const map = JSON.parse(localStorage.getItem("study-studio-progress") || "{}");
-    expect(map["lesson-1"].status).toBe("in_progress");
-    expect(map["lesson-1"].lastAccessed).toBeTruthy();
+    const progress = getProgress("lesson-1");
+    expect(progress.status).toBe("in_progress");
+    expect(progress.lastAccessed).toBeTruthy();
   });
 
   it("records quiz completion with a clamped score", () => {
     markQuizComplete("lesson-1", 87.4);
-    const map = JSON.parse(localStorage.getItem("study-studio-progress") || "{}");
-    expect(map["lesson-1"].status).toBe("completed");
-    expect(map["lesson-1"].lastQuizScore).toBe(87);
+    const progress = getProgress("lesson-1");
+    expect(progress.status).toBe("completed");
+    expect(progress.lastQuizScore).toBe(87);
   });
 
   it("clears progress for a single lesson", () => {
     markAccessed("lesson-1");
     markAccessed("lesson-2");
     clearProgress("lesson-1");
-    const map = JSON.parse(localStorage.getItem("study-studio-progress") || "{}");
-    expect(map["lesson-1"]).toBeUndefined();
-    expect(map["lesson-2"]).toBeDefined();
+
+    expect(getProgressMap()["lesson-1"]).toBeUndefined();
+    expect(getProgressMap()["lesson-2"]).toBeDefined();
+  });
+
+  it("writes a versioned envelope, so a future shape change can migrate", () => {
+    markAccessed("lesson-1");
+    const raw = JSON.parse(localStorage.getItem("study-studio-progress") || "null");
+    expect(raw).toHaveProperty("v");
+    expect(raw).toHaveProperty("data");
+    expect(raw.data["lesson-1"].status).toBe("in_progress");
   });
 });
 

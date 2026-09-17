@@ -326,6 +326,7 @@ export default function AudioFileDownload({
             controls
             src={playUrl}
             preload="metadata"
+            data-testid="audio-element"
             className="w-full"
             onPlay={() => playAudio(trackType)}
             onPause={() => stopAudio()}

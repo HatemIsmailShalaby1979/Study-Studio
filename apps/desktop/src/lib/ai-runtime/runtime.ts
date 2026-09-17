@@ -16,6 +16,8 @@ import type {
   AIHealth,
   AIMessage,
   AIModel,
+  AIModelLoadOptions,
+  AIModelLoadResult,
   AIModelProfile,
   AIProvider,
   AIProviderSelectionCriteria,
@@ -261,6 +263,82 @@ export class AIRuntime {
     const provider = this.providers.get(id);
     if (!provider) return null;
     return provider.getModelProfile(modelId);
+  }
+
+  // ─── Model lifecycle ───────────────────────────────────────────────────
+
+  /**
+   * Whether the active provider can load a model into memory on demand.
+   * False for providers that only serve what their runtime already has loaded.
+   */
+  supportsModelLoading(providerId?: string): boolean {
+    const id = providerId ?? this.resolveProviderId();
+    return typeof this.providers.get(id)?.loadModel === "function";
+  }
+
+  /** Whether a model is resident. `undefined` when the provider cannot tell. */
+  async isModelLoaded(modelId: string, providerId?: string): Promise<boolean | undefined> {
+    const id = providerId ?? this.resolveProviderId();
+    const provider = this.providers.get(id);
+    if (!provider?.isModelLoaded) return undefined;
+    return provider.isModelLoaded(modelId);
+  }
+
+  /**
+   * Make a model resident. Throws when the provider has no load capability —
+   * callers should gate on {@link supportsModelLoading} when a missing load
+   * path is a normal outcome rather than an error.
+   */
+  async loadModel(
+    modelId: string,
+    options?: AIModelLoadOptions,
+    providerId?: string
+  ): Promise<AIModelLoadResult> {
+    const id = providerId ?? this.resolveProviderId();
+    const provider = this.providers.get(id);
+    if (!provider) throw new Error(`No AI provider registered with id "${id}"`);
+    if (!provider.loadModel) {
+      throw new Error(
+        `Provider "${id}" cannot load models on demand. Load the model in its own runtime first.`
+      );
+    }
+    return provider.loadModel(modelId, options);
+  }
+
+  /** Release a model from memory. No-op when the provider cannot unload. */
+  async unloadModel(modelId: string, providerId?: string): Promise<void> {
+    const id = providerId ?? this.resolveProviderId();
+    await this.providers.get(id)?.unloadModel?.(modelId);
+  }
+
+  /**
+   * Resolve the model for a request AND guarantee it is resident, in one call.
+   *
+   * This is the app's "just works" entry point. On a runtime that separates
+   * downloaded from loaded (LM Studio), the user's selection is loaded here, so
+   * no manual pre-load in the runtime's own UI is ever required. On runtimes
+   * that cannot load (Ollama pulls implicitly, hosted APIs always serve), it
+   * degrades to plain resolution.
+   */
+  async ensureModelLoaded(
+    preferredModel?: string,
+    providerId?: string
+  ): Promise<{ model: string; loaded: boolean; loadTimeSeconds?: number; message?: string }> {
+    const id = providerId ?? this.resolveProviderId();
+    const provider = this.providers.get(id);
+    if (!provider) throw new Error(`No AI provider registered with id "${id}"`);
+
+    // Providers that implement load-on-demand (LM Studio) do the work inside
+    // ensureModel, so a single call both resolves and loads.
+    if (provider.loadModel) {
+      const model = await provider.ensureModel(preferredModel);
+      this.session.setModel(model);
+      return { model, loaded: true };
+    }
+
+    const model = await provider.ensureModel(preferredModel);
+    this.session.setModel(model);
+    return { model, loaded: true, message: "Provider manages its own model lifecycle." };
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────

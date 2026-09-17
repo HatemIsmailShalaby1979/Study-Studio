@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from "react";
 import {
   initializeRuntime,
   type ApiModel,
@@ -8,7 +8,16 @@ import {
 } from "@/lib/api";
 import type { AIProviderStatus } from "@/lib/ai-runtime/types";
 import { aiRuntime } from "@/lib/ai-runtime";
-import { applyStoredConfigs, hasApiKey } from "@/lib/ai-runtime/providerStore";
+import { applyStoredConfigs } from "@/lib/ai-runtime/providerStore";
+import { LOCAL_PROVIDER_IDS, ONLINE_PROVIDER_IDS } from "@/lib/ai-runtime/providerIds";
+import {
+  computeCanGenerate,
+  deriveMode,
+  needsApiKey as computeNeedsApiKey,
+  type RuntimeMode,
+} from "@/lib/ai-runtime/routing";
+import { bindDefaultSkills, type ActiveSkillSummary } from "@/lib/skills";
+import { log } from "@/lib/logger";
 
 export interface AIRuntimeContextValue {
   /** True once the initial handshake (start + model list) has completed. */
@@ -30,7 +39,7 @@ export interface AIRuntimeContextValue {
   /** Provider id currently routing generation (local-first / online fallback). */
   activeProviderId: string;
   /** Derived operating mode shown in the Settings mode summary. */
-  mode: "offline" | "online" | "hybrid" | "unavailable";
+  mode: RuntimeMode;
   /** Whether a local TTS engine (Piper) appears to be available. */
   ttsAvailable: boolean;
   /**
@@ -38,6 +47,22 @@ export interface AIRuntimeContextValue {
    * this to prompt the user to enter an online API key (OpenAI / OpenRouter).
    */
   needsApiKey: boolean;
+  /**
+   * The model that was resolved and made resident during init. On a runtime
+   * that separates downloaded from loaded (LM Studio) this is the model the app
+   * loaded for the user — no manual pre-load in the runtime's own UI.
+   */
+  loadedModel: string;
+  /** True when init actually had to load weights into memory. */
+  didLoadModel: boolean;
+  /** Note about the model-loading step (why it was skipped, or what failed). */
+  modelLoadMessage?: string;
+  /**
+   * The skills bound for this session. Populated automatically once a local
+   * provider is detected, so generation is skill-guided without the user having
+   * to touch the skill selector.
+   */
+  activeSkills: ActiveSkillSummary[];
   /** Re-run the full init handshake (e.g. after the user pulls a model). */
   refresh: () => void;
   /** Re-run discovery only (lighter than refresh — no Ollama bootstrap). */
@@ -58,6 +83,10 @@ const AIRuntimeContext = createContext<AIRuntimeContextValue>({
   mode: "unavailable",
   ttsAvailable: false,
   needsApiKey: false,
+  loadedModel: "",
+  didLoadModel: false,
+  modelLoadMessage: undefined,
+  activeSkills: [],
   refresh: () => {},
   refreshProviders: () => {},
   setActiveProvider: () => {},
@@ -67,43 +96,17 @@ export function useAIRuntime(): AIRuntimeContextValue {
   return useContext(AIRuntimeContext);
 }
 
-/**
- * Every provider id that counts as a LOCAL runtime. Any of these answering the
- * universal localhost scan marks the app as able to generate offline. Kept in
- * sync with LOCAL_PROBE_TARGETS in providerProbe.ts.
- */
-const LOCAL_PROVIDER_IDS = ["ollama", "lm-studio", "localai", "vllm", "litellm", "fastchat"];
-const ONLINE_PROVIDER_IDS = ["openai", "openrouter"];
+// LOCAL_PROVIDER_IDS / ONLINE_PROVIDER_IDS live in ai-runtime/providerIds.ts so
+// the init handshake, the provider probe, and this component cannot drift apart.
+//
+// computeCanGenerate / deriveMode / needsApiKey live in ai-runtime/routing.ts as
+// pure functions. They gate the Generate button, the mode badge, and the API-key
+// prompt, and they previously sat here with 0% branch coverage — including a dead
+// `ttsAvailable ? "offline" : "offline"`. See AUDIT.md P1-2.
 
-/** Compute whether generation is allowed (online gate). */
-function computeCanGenerate(statuses: AIProviderStatus[]): boolean {
-  const localUp = statuses.some(
-    (s) => LOCAL_PROVIDER_IDS.includes(s.providerId) && s.available
-  );
-  if (localUp) return true;
-  // Online provider with a stored key counts as available for generation.
-  const onlineUp = statuses.some(
-    (s) => ONLINE_PROVIDER_IDS.includes(s.providerId) && s.available && hasApiKey(s.providerId)
-  );
-  return onlineUp;
-}
-
-/** Derive the operating mode from provider statuses + TTS availability. */
-function deriveMode(
-  statuses: AIProviderStatus[],
-  ttsAvailable: boolean
-): "offline" | "online" | "hybrid" | "unavailable" {
-  const localUp = statuses.some(
-    (s) => LOCAL_PROVIDER_IDS.includes(s.providerId) && s.available
-  );
-  const onlineUp = statuses.some(
-    (s) => ONLINE_PROVIDER_IDS.includes(s.providerId) && s.available
-  );
-  if (localUp && onlineUp) return "hybrid";
-  if (localUp) return ttsAvailable ? "offline" : "offline"; // local LLM up; TTS is independent
-  if (onlineUp) return ttsAvailable ? "hybrid" : "online";
-  return "unavailable";
-}
+/** Every provider id that counts as a local runtime, as a plain array. */
+const LOCAL_IDS: string[] = [...LOCAL_PROVIDER_IDS];
+const ONLINE_IDS: string[] = [...ONLINE_PROVIDER_IDS];
 
 export function AIRuntimeProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<RuntimeInitResult & { canGenerate: boolean }>({
@@ -118,6 +121,12 @@ export function AIRuntimeProvider({ children }: { children: ReactNode }) {
   const [initializing, setInitializing] = useState(true);
   const [initialized, setInitialized] = useState(false);
   const [ttsAvailable, setTtsAvailable] = useState(false);
+  const [activeSkills, setActiveSkills] = useState<ActiveSkillSummary[]>([]);
+  /**
+   * Guards the launch-time skill binding so a re-init (Settings "Full Refresh")
+   * does not re-bind and clobber a skill the user chose by hand.
+   */
+  const skillsBoundRef = useRef(false);
 
   const runInit = useCallback(async () => {
     setInitializing(true);
@@ -125,6 +134,27 @@ export function AIRuntimeProvider({ children }: { children: ReactNode }) {
       const result = await initializeRuntime();
       const canGenerate = computeCanGenerate(result.providerStatuses ?? []);
       setState({ ...result, canGenerate });
+
+      // ── Auto-inject skills ──────────────────────────────────────────────
+      // The requirement: once the app launches and finds a usable model, the
+      // skill set is applied automatically so every subsequent generation is
+      // skill-guided without the user touching the selector. Binding only
+      // happens once per session; the user's manual choice wins afterwards.
+      if (canGenerate && !skillsBoundRef.current) {
+        skillsBoundRef.current = true;
+        try {
+          const bound = bindDefaultSkills({
+            model: result.loadedModel || result.recommendedModel || "auto",
+            providerId: result.activeProviderId || "auto",
+          });
+          setActiveSkills(bound);
+          log(
+            `[Skills] Bound ${bound.length} skill pack(s): ${bound.map((s) => s.id).join(", ")}`
+          );
+        } catch (e) {
+          console.warn("[Skills] Auto-binding failed:", e);
+        }
+      }
     } catch (e) {
       setState({
         available: false,
@@ -148,8 +178,8 @@ export function AIRuntimeProvider({ children }: { children: ReactNode }) {
     const statuses = await aiRuntime.discoverAll().catch(() => [] as AIProviderStatus[]);
     const isUp = (id: string) => statuses.find((s) => s.providerId === id && s.available);
     const active =
-      LOCAL_PROVIDER_IDS.map((id) => isUp(id)).find(Boolean)?.providerId ??
-      ONLINE_PROVIDER_IDS.map((id) => isUp(id)).find(Boolean)?.providerId ??
+      LOCAL_IDS.map((id) => isUp(id)).find(Boolean)?.providerId ??
+      ONLINE_IDS.map((id) => isUp(id)).find(Boolean)?.providerId ??
       "";
     if (active) aiRuntime.session.setProvider(active);
 
@@ -234,12 +264,10 @@ export function AIRuntimeProvider({ children }: { children: ReactNode }) {
 
   // True once init has settled and NO local provider answered the universal
   // scan. Drives the "enter an API key" prompt on the Generate page.
-  const needsApiKey =
-    initialized &&
-    !state.canGenerate &&
-    !(state.providerStatuses ?? []).some(
-      (s) => LOCAL_PROVIDER_IDS.includes(s.providerId) && s.available
-    );
+  const needsApiKey = computeNeedsApiKey(state.providerStatuses ?? [], {
+    initialized,
+    canGenerate: state.canGenerate,
+  });
 
   return (
     <AIRuntimeContext.Provider
@@ -256,6 +284,10 @@ export function AIRuntimeProvider({ children }: { children: ReactNode }) {
         mode,
         ttsAvailable,
         needsApiKey,
+        loadedModel: state.loadedModel ?? "",
+        didLoadModel: state.didLoadModel ?? false,
+        modelLoadMessage: state.modelLoadMessage,
+        activeSkills,
         refresh: runInit,
         refreshProviders,
         setActiveProvider,

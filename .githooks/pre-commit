@@ -1,0 +1,69 @@
+#!/bin/sh
+# Stage 0 of the QA workflow — the fast local gate.
+#
+# See apps/desktop/QA-WORKFLOW.md. This is deliberately NOT the full pipeline:
+# `npm run verify` takes ~55 s and belongs before a push, not on every commit.
+# What runs here is the subset that is (a) fast and (b) catches the two mistakes
+# that are most annoying to find later — a type error and a lint error.
+#
+# ENABLING IT
+#
+# Git ignores checked-in hooks unless you point it at this directory:
+#
+#     git config core.hooksPath .githooks
+#
+# That is a one-time, per-clone command; it is not set automatically because
+# silently rewriting someone's git config is not a thing a repo should do.
+#
+# BYPASSING
+#
+#     git commit --no-verify
+#
+# Legitimate when you are committing work-in-progress on a branch. CI runs the
+# full pipeline regardless, so nothing reaches main unchecked.
+
+set -e
+
+APP="apps/desktop"
+
+# Nothing to check in a repo where dependencies were never installed.
+if [ ! -d "$APP/node_modules" ]; then
+  echo "pre-commit: $APP/node_modules missing — skipping (run npm install)"
+  exit 0
+fi
+
+# Run from the app so eslint resolves .eslintrc.json, the Next.js plugin's page
+# directory and tsconfig.json the same way `npm run lint:ci` does. Linting from
+# the repo root emits a spurious "Pages directory cannot be found" warning.
+cd "$APP"
+
+# `--relative` keeps the paths relative to the app directory. Only the files in
+# this commit matter; deleted files have no contents to lint.
+STAGED=$(git diff --cached --name-only --relative --diff-filter=ACMR -- '*.ts' '*.tsx' || true)
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+COUNT=$(printf '%s\n' "$STAGED" | wc -l | tr -d ' ')
+echo "pre-commit: checking $COUNT staged TypeScript file(s)"
+
+# Lint only what changed — whole-project lint is ~8 s and belongs in CI.
+# `next lint` does not accept an arbitrary file list, so call eslint directly
+# with the same config the lint:ci gate uses.
+if ! npx eslint --no-eslintrc --config .eslintrc.json $STAGED; then
+  echo ""
+  echo "pre-commit: lint failed. Fix the cause rather than adding an eslint-disable"
+  echo "            comment — the warning floor is zero (see QA-WORKFLOW.md)."
+  exit 1
+fi
+
+# Typecheck is whole-project by nature (~4 s) and catches errors that a
+# file-scoped lint cannot see.
+if ! npx tsc --noEmit; then
+  echo ""
+  echo "pre-commit: typecheck failed."
+  exit 1
+fi
+
+echo "pre-commit: OK"

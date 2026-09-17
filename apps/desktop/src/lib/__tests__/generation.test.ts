@@ -1,7 +1,7 @@
 import {
   detectLanguage,
   getLessonSystemPrompt,
-  getPodcastSystemPrompt,
+  podcastChunkSystemPrompt,
   generateHTML,
   generateLesson,
 } from "@/lib/generation";
@@ -31,7 +31,11 @@ describe("detectLanguage", () => {
 });
 
 // ---------------------------------------------------------------------------
-// getLessonSystemPrompt / getPodcastSystemPrompt – language parameter
+// getLessonSystemPrompt / podcastChunkSystemPrompt – language parameter
+//
+// These exercise the LIVE podcast prompt. The previous pair of tests covered
+// `getPodcastSystemPrompt`, which had no production caller — it was superseded
+// by the chunked path and has been deleted. See AUDIT.md.
 // ---------------------------------------------------------------------------
 describe("system prompts", () => {
   it("lesson prompt defaults to English when no language is given", () => {
@@ -46,13 +50,14 @@ describe("system prompts", () => {
     expect(prompt).toContain("JSON keys");
   });
 
-  it("podcast prompt includes Arabic instruction when language='ar'", () => {
-    const prompt = getPodcastSystemPrompt("intermediate", "ar");
+  it("podcast chunk prompt includes an Arabic instruction when language='ar'", () => {
+    const prompt = podcastChunkSystemPrompt("intermediate", "ar", "male", "female");
     expect(prompt).toContain("Modern Standard Arabic");
   });
 
-  it("podcast prompt defaults to English", () => {
-    expect(getPodcastSystemPrompt("intermediate")).not.toContain("Arabic");
+  it("podcast chunk prompt omits the Arabic instruction for English", () => {
+    const prompt = podcastChunkSystemPrompt("intermediate", "en", "male", "female");
+    expect(prompt).not.toContain("Arabic");
   });
 });
 
@@ -141,44 +146,12 @@ const VALID_LESSON_JSON = JSON.stringify({
   ],
 });
 
-// Valid podcast mocks — used when tests need podcast to succeed
-const VALID_PODCAST_TITLE = JSON.stringify({ title: "Test Podcast" });
-const VALID_PODCAST_CHUNK = JSON.stringify({
-  lines: [
-    { speaker: "Host A", text: "Welcome to our in-depth discussion about this fascinating topic. I'm excited to explore the key concepts with you today." },
-    { speaker: "Host B", text: "Thanks for having me! I've been looking forward to diving into the details of this subject with you." },
-    { speaker: "Host A", text: "Let's start by examining the foundational principles. The first thing to understand is how the core mechanisms work." },
-    { speaker: "Host B", text: "That's a great starting point. I think many people misunderstand the basic framework, so let's clarify it." },
-    { speaker: "Host A", text: "Exactly. The key insight is that the underlying process follows a predictable pattern that we can analyze systematically." },
-    { speaker: "Host B", text: "And once you understand that pattern, you can see how it applies across different contexts and scenarios." },
-    { speaker: "Host A", text: "Let me give you a concrete example. Consider how this principle manifests in real-world applications." },
-    { speaker: "Host B", text: "That's a perfect illustration. The practical implications are significant for anyone working in this field." },
-  ],
-});
-const VALID_PODCAST_GQ = JSON.stringify({
-  glossary: [
-    { term: "Podcast Term One", definition: "A comprehensive definition of the first key term discussed in this podcast episode with practical context and real-world applications for learners." },
-    { term: "Podcast Term Two", definition: "A comprehensive definition of the second key term discussed in this podcast episode with practical context and real-world applications for learners." },
-    { term: "Podcast Term Three", definition: "A comprehensive definition of the third key term discussed in this podcast episode with practical context and real-world applications for learners." },
-    { term: "Podcast Term Four", definition: "A comprehensive definition of the fourth key term discussed in this podcast episode with practical context and real-world applications for learners." },
-    { term: "Podcast Term Five", definition: "A comprehensive definition of the fifth key term discussed in this podcast episode with practical context and real-world applications for learners." },
-    { term: "Podcast Term Six", definition: "A comprehensive definition of the sixth key term discussed in this podcast episode with practical context and real-world applications for learners." },
-    { term: "Podcast Term Seven", definition: "A comprehensive definition of the seventh key term discussed in this podcast episode with practical context and real-world applications for learners." },
-    { term: "Podcast Term Eight", definition: "A comprehensive definition of the eighth key term discussed in this podcast episode with practical context and real-world applications for learners." },
-  ],
-  quiz: [
-    { question: "What is the primary topic discussed in this podcast?", options: ["Option A", "Option B", "Option C", "Option D"], correctIndex: 0, explanation: "Option A is correct because the hosts explicitly discussed this as the central theme throughout the episode with detailed analysis and supporting evidence from multiple perspectives." },
-    { question: "Which concept did the hosts explore in greatest depth?", options: ["Option A", "Option B", "Option C", "Option D"], correctIndex: 1, explanation: "Option B is correct because the hosts dedicated the most time to analyzing this particular concept and its implications for the field and practice." },
-    { question: "What practical application was highlighted by Host A?", options: ["Option A", "Option B", "Option C", "Option D"], correctIndex: 2, explanation: "Option C is correct because Host A specifically described this application with concrete examples and real-world context from professional experience." },
-    { question: "How does this topic relate to broader trends in the field?", options: ["Option A", "Option B", "Option C", "Option D"], correctIndex: 0, explanation: "Option A is correct because the hosts discussed how these concepts connect to larger patterns and emerging developments across the industry." },
-    { question: "What future direction did the hosts identify as most promising?", options: ["Option A", "Option B", "Option C", "Option D"], correctIndex: 3, explanation: "Option D is correct because both hosts agreed this direction represents the most significant opportunity for advancement and innovation." },
-    { question: "Which challenge did the hosts discuss as most significant?", options: ["Option A", "Option B", "Option C", "Option D"], correctIndex: 1, explanation: "Option B is correct because the hosts devoted substantial discussion to this challenge and its potential solutions and mitigation strategies." },
-  ],
-});
-
-// Podcast failure response — since podcast is best-effort, we make it fail
-// gracefully for lesson-only tests so chat call counts stay predictable.
-const PODCAST_FAIL = new Error("Podcast generation not mocked for this test");
+// NOTE: VALID_PODCAST_TITLE / VALID_PODCAST_CHUNK / VALID_PODCAST_GQ /
+// PODCAST_FAIL were removed here — they were declared but referenced by no
+// test, so they only produced lint warnings. No podcast-generation test
+// currently exists (the suite only asserts podcast *prompt* text and the
+// lesson-only path), so the podcast output contract is untested. Restore
+// these fixtures when that test is written. See AUDIT.md §5.
 
 function messagesOf(call: unknown[]): OllamaChatMessage[] {
   return call[0] as OllamaChatMessage[];

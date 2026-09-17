@@ -6,7 +6,6 @@ import {
   quizRetentionSummary,
   appendMasteryScored,
   EVENT_TYPES,
-  HELIX_EVENTS_KEY,
 } from "@/lib/helixEvents";
 
 // ---------------------------------------------------------------------------

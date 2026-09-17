@@ -8,12 +8,14 @@ import { Lesson, Difficulty } from "@/types";
 import { generateLesson } from "@/lib/api";
 import { detectLanguage, type LessonLanguage } from "@/lib/generation";
 import { profileAndValidate } from "@/lib/modelProfiler";
-import { skillInjector, listSkills } from "@/lib/skills";
+import { getLesson, loadLibrary, upsertLesson } from "@/lib/libraryStore";
+import { skillInjector, listSkills, bindSkills, bindDefaultSkills } from "@/lib/skills";
+import { aiRuntime } from "@/lib/ai-runtime";
 import { useMetacognitiveObserver } from "@/hooks/useMetacognitive";
 import MetacognitivePulse from "@/components/MetacognitivePulse";
 import { getJourney, addTopicToJourney, buildJourneyContextPrompt, type Journey } from "@/lib/journeys";
 import { useAIRuntime } from "@/components/AIRuntimeProvider";
-import { friendlyErrorByKind } from "@/lib/friendlyErrors";
+import { toFriendlyError } from "@/lib/friendlyErrors";
 
 const LANGUAGES: { value: LessonLanguage | "auto"; label: string; desc: string; emoji: string }[] = [
   { value: "auto", label: "Auto", desc: "Detect from topic", emoji: "🌐" },
@@ -53,7 +55,7 @@ const PROVIDER_NAMES: Record<string, string> = {
 function GenerateContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { initialized, initializing, available, canGenerate, models, recommendedModel, message, refresh, mode, activeProviderId, providerStatuses, ttsAvailable, needsApiKey, setActiveProvider } = useAIRuntime();
+  const { initialized, initializing, available, canGenerate, models, recommendedModel, message, refresh, activeProviderId, providerStatuses, ttsAvailable, setActiveProvider, refreshProviders, loadedModel, didLoadModel, modelLoadMessage, activeSkills } = useAIRuntime();
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
@@ -63,10 +65,24 @@ function GenerateContent() {
   const [language, setLanguage] = useState<LessonLanguage | "auto">("auto");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [profilerWarning, setProfilerWarning] = useState("");
-  const [selectedSkill, setSelectedSkill] = useState("default");
+  /**
+   * Skill selection. "auto" keeps the launch-time skill set bound for this
+   * session; "manual" uses exactly the toggled set instead. Skills are injected
+   * automatically, so this is an escape hatch, not a required step.
+   */
+  const [skillMode, setSkillMode] = useState<"auto" | "manual">("auto");
+  const [manualSkills, setManualSkills] = useState<string[]>([]);
   const [profilingModel, setProfilingModel] = useState(false);
+  const [loadingModel, setLoadingModel] = useState(false);
   const [activeJourney, setActiveJourney] = useState<Journey | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  /**
+   * The skills currently bound for this session. Comes from the provider
+   * context (bound automatically at launch) and falls back to reading the
+   * injector directly, so the chips are correct even before a re-render.
+   */
+  const boundSkills = activeSkills.length > 0 ? activeSkills : skillInjector.summaries();
 
   const metacognitive = useMetacognitiveObserver();
 
@@ -126,15 +142,12 @@ function GenerateContent() {
     const edit = searchParams.get("edit");
     if (edit) {
       setEditingId(edit);
-      const stored = localStorage.getItem("study-studio-library");
-      if (stored) {
-        const library: Lesson[] = JSON.parse(stored);
-        const found = library.find((l) => l.id === edit);
-        if (found) {
-          setInput(found.inputText || found.title);
-          if (found.difficulty) setDifficulty(found.difficulty);
-        }
-      }
+      // One record, not the whole library.
+      void getLesson(edit).then((found) => {
+        if (!found) return;
+        setInput(found.inputText || found.title);
+        if (found.difficulty) setDifficulty(found.difficulty);
+      });
     }
     const journeyId = searchParams.get("journey");
     if (journeyId) {
@@ -146,15 +159,38 @@ function GenerateContent() {
     async (modelId: string) => {
       setSelectedModel(modelId);
       setProfilerWarning("");
-      setProfilingModel(true);
+      setLoadingModel(false);
       if (!modelId) {
         setProfilingModel(false);
         return;
       }
+
+      // Bind the chosen model to the skill set so the session's injections stay
+      // consistent with what is actually going to run.
+      bindDefaultSkills({ model: modelId, providerId: activeProviderId, intent: "lesson" });
+
+      // Load-on-demand. On a runtime that separates downloaded from loaded
+      // (LM Studio) the user's selection is loaded here, so picking a model in
+      // this dropdown is all that is required — no pre-loading in LM Studio.
+      if (aiRuntime.supportsModelLoading(activeProviderId || undefined)) {
+        setLoadingModel(true);
+        try {
+          await aiRuntime.ensureModelLoaded(modelId, activeProviderId || undefined);
+          await refreshProviders();
+        } catch (e) {
+          setProfilerWarning(
+            e instanceof Error ? e.message : "Could not load this model into memory."
+          );
+        } finally {
+          setLoadingModel(false);
+        }
+      }
+
+      setProfilingModel(true);
       try {
         const { validation } = await profileAndValidate(modelId, "lesson");
         if (validation.suitable === false) {
-          setProfilerWarning(validation.message || "");
+          setProfilerWarning((prev) => prev || validation.message || "");
         }
       } catch {
         // Profiling is best-effort; never block generation on it.
@@ -162,8 +198,33 @@ function GenerateContent() {
         setProfilingModel(false);
       }
     },
-    []
+    [activeProviderId, refreshProviders]
   );
+
+  /**
+   * Toggle one skill in the manual set.
+   *
+   * The first toggle switches the session out of "auto" — an explicit choice
+   * always wins over the launch-time default, and silently merging the two
+   * would make the toggle state a lie.
+   */
+  const toggleSkill = useCallback((skillId: string) => {
+    setSkillMode("manual");
+    setManualSkills((prev) =>
+      prev.includes(skillId) ? prev.filter((s) => s !== skillId) : [...prev, skillId]
+    );
+  }, []);
+
+  /** Drop the manual set and re-bind the launch default. */
+  const resetSkills = useCallback(() => {
+    setSkillMode("auto");
+    setManualSkills([]);
+    bindDefaultSkills({
+      model: selectedModel || "auto",
+      providerId: activeProviderId,
+      intent: "lesson",
+    });
+  }, [selectedModel, activeProviderId]);
 
   const handleGenerate = async () => {
     if (!input.trim()) return;
@@ -172,8 +233,18 @@ function GenerateContent() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // Bind the selected skill to the model (re-injection only on change).
-    skillInjector.bind(selectedModel || "auto", selectedSkill);
+    // Re-assert the skill binding for this request. The set is normally bound at
+    // launch or on model change; this is a cheap idempotent safety net that also
+    // covers a model change made from another tab.
+    if (skillMode === "auto") {
+      bindDefaultSkills({
+        model: selectedModel || "auto",
+        providerId: activeProviderId,
+        intent: "lesson",
+      });
+    } else {
+      bindSkills(selectedModel || "auto", manualSkills, activeProviderId);
+    }
 
     try {
       const isContent = input.length > 80 || input.includes("\n");
@@ -182,8 +253,7 @@ function GenerateContent() {
       let journeyContextPrompt: string | undefined;
       if (activeJourney) {
         try {
-          const stored = localStorage.getItem("study-studio-library");
-          const lessons: Lesson[] = stored ? JSON.parse(stored) : [];
+          const lessons = await loadLibrary();
           const topics = activeJourney.topicIds
             .map((id) => lessons.find((l) => l.id === id))
             .filter((l): l is Lesson => Boolean(l))
@@ -231,27 +301,23 @@ function GenerateContent() {
         audioFormat: "mp3",
       };
 
-      const stored = localStorage.getItem("study-studio-library");
-      const library: Lesson[] = stored ? JSON.parse(stored) : [];
-
-      if (editingId) {
-        const idx = library.findIndex((l) => l.id === editingId);
-        if (idx >= 0) library[idx] = lesson;
-        else library.unshift(lesson);
-      } else {
-        library.unshift(lesson);
+      // Persist with a single-record upsert. This used to be a read-modify-write
+      // of the entire library — done twice, with the result ignored — so hitting
+      // the storage quota meant the lesson appeared to save and did not. The
+      // boolean is now checked and the user is told.
+      const saved = await upsertLesson(lesson);
+      if (!saved) {
+        setError(
+          "This lesson could not be saved — your device storage is full. Free some space, then generate again."
+        );
       }
-
-      localStorage.setItem("study-studio-library", JSON.stringify(library));
 
       // Journey container: register the freshly generated topic into the active
       // journey so it appears in the track and future topics build on it.
       if (activeJourney && lesson.id) {
         addTopicToJourney(activeJourney.id, lesson.id);
         lesson.journeyId = activeJourney.id;
-        const libIdx = library.findIndex((l) => l.id === lesson.id);
-        if (libIdx >= 0) library[libIdx] = lesson;
-        localStorage.setItem("study-studio-library", JSON.stringify(library));
+        await upsertLesson(lesson);
       }
 
       // Metacognitive tracking: record topic completion (fires pulse every 5).
@@ -266,15 +332,11 @@ function GenerateContent() {
       if (controller.signal.aborted) {
         setError("Generation cancelled.");
       } else {
-        const friendly = friendlyErrorByKind("generic");
-        const message = e instanceof Error ? e.message : String(e);
-        const mapped = friendlyErrorByKind(
-          message.includes("401") || message.includes("unauthor") || message.includes("api key") ? "api-key-invalid"
-            : message.includes("tts") || message.includes("piper") || message.includes("voice") ? "audio-generation-failed"
-            : message.includes("localhost") || message.includes("11434") || message.includes("1234") || message.includes("ollama") || message.includes("lm studio") ? "local-server-unreachable"
-            : message.includes("network") || message.includes("timeout") || message.includes("fetch failed") ? "network"
-            : "generic"
-        );
+        // Classification lives in friendlyErrors.ts, not here. The previous
+        // inline `message.includes(...)` chain re-implemented it at the UI edge
+        // and mis-reported, e.g. a validation error mentioning "voice" as an
+        // audio failure. One classifier, one place to fix. See AUDIT.md P2-6.
+        const mapped = toFriendlyError(e);
         setError(`${mapped.message}${mapped.hint ? `\n\n${mapped.hint}` : ""}`);
       }
     } finally {
@@ -423,7 +485,13 @@ function GenerateContent() {
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
-          {profilingModel && (
+          {loadingModel && (
+            <div className="flex items-center gap-2 mt-2 text-xs text-muted">
+              <div className="skeleton h-3 w-3 rounded-full" />
+              Loading model into memory…
+            </div>
+          )}
+          {profilingModel && !loadingModel && (
             <div className="flex items-center gap-2 mt-2 text-xs text-muted">
               <div className="skeleton h-3 w-3 rounded-full" />
               Profiling model capabilities...
@@ -448,25 +516,76 @@ function GenerateContent() {
               </Link>
             </div>
           )}
+          {loadedModel && !loadingModel && (
+            <p className="text-[10px] text-muted mt-1.5 px-1">
+              {didLoadModel
+                ? `Loaded “${loadedModel}” into memory for this session.`
+                : `“${loadedModel}” is ready.`}
+              {modelLoadMessage ? ` ${modelLoadMessage}` : ""}
+            </p>
+          )}
         </div>
 
-        {/* Skill selector */}
+        {/* Skill injection — applied automatically, with per-skill toggles */}
         <div className="mb-4">
           <div className="flex items-center justify-between mb-1.5">
             <label className="text-xs font-medium text-muted">Skill Injection</label>
-            <span className="badge badge-primary text-[10px]">Session-scoped</span>
+            <div className="flex items-center gap-2">
+              <span
+                className={`badge text-[10px] ${
+                  skillMode === "auto" ? "badge-green" : "badge-amber"
+                }`}
+              >
+                {skillMode === "auto" ? "Auto-applied" : "Custom"}
+              </span>
+              {skillMode === "manual" && (
+                <button
+                  type="button"
+                  onClick={resetSkills}
+                  className="text-[10px] text-primary hover:underline"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
           </div>
-          <select
-            value={selectedSkill}
-            onChange={(e) => setSelectedSkill(e.target.value)}
-            className="input-field text-sm"
-          >
-            {listSkills().map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-          <p className="text-[10px] text-muted mt-1.5 px-1">
-            Pinned system instructions prepended to every request for this session.
+
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {listSkills()
+              .filter((s) => s.id !== "default")
+              .map((s) => {
+                // In auto mode the launch-bound set is shown as active; the
+                // first click leaves auto and pins an explicit set.
+                const active =
+                  skillMode === "auto"
+                    ? boundSkills.some((b) => b.id === s.id)
+                    : manualSkills.includes(s.id);
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => toggleSkill(s.id)}
+                    aria-pressed={active}
+                    title={s.summary ?? s.name}
+                    className={`pill text-[11px] ${active ? "" : "opacity-45"}`}
+                  >
+                    {active ? "✓ " : ""}
+                    {s.name}
+                  </button>
+                );
+              })}
+          </div>
+
+          <p className="text-[10px] text-muted px-1">
+            {skillMode === "auto"
+              ? `The recommended set for this task is prepended to every request (${boundSkills.length} pack${
+                  boundSkills.length === 1 ? "" : "s"
+                }). Toggle one to customise.`
+              : manualSkills.length > 0
+                ? `${manualSkills.length} pack${
+                    manualSkills.length === 1 ? "" : "s"
+                  } will be injected. Click again to remove one.`
+                : "Nothing selected — only the base educator prompt will be used."}
           </p>
         </div>
 

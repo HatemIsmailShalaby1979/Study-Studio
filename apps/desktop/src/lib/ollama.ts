@@ -1,4 +1,6 @@
 import { isTauri, invokeTauri } from "./tauri";
+import { runtimeFetch } from "./ai-runtime/transport";
+import { log } from "./logger";
 
 export const OLLAMA_URL = process.env["OLLAMA_URL"] || "http://localhost:11434";
 let CACHED_MODELS: OllamaModelInfo[] = [];
@@ -62,7 +64,10 @@ export interface OllamaModelInfo {
 }
 
 async function ollamaFetch<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${OLLAMA_URL}${path}`, {
+  // runtimeFetch, not fetch: inside the Tauri webview a bare fetch() is subject
+  // to the webview origin's CORS policy. Routing through Tauri's reqwest client
+  // makes every local runtime reachable regardless of how it sets CORS headers.
+  const res = await runtimeFetch(`${OLLAMA_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -76,10 +81,24 @@ async function ollamaFetch<T>(path: string, body: unknown, signal?: AbortSignal)
 }
 
 /**
+ * Context window requested from Ollama when the caller does not specify one.
+ *
+ * Ollama's own default is ~2048, which truncates a long lesson mid-JSON. 24576
+ * is the value the app has shipped with and that the tests pin; note this is a
+ * KV-cache allocation, so a small model on a modest machine can be asked to
+ * reserve far more memory than it needs. Callers that know better should pass
+ * `num_ctx` explicitly (see the per-request override in `generateLesson`).
+ */
+const DEFAULT_NUM_CTX = 24576;
+
+/** Token cap requested when the caller does not specify one. */
+const DEFAULT_NUM_PREDICT = 8192;
+
+/**
  * Build Ollama options with sensible hardware defaults.
  *
- * - `num_ctx: 8192` widens the default ~2048 context window so longer lessons
- *   aren't truncated.
+ * - `num_ctx` widens Ollama's default ~2048 context window so longer lessons
+ *   aren't truncated. See DEFAULT_NUM_CTX.
  * - `keep_alive: "10m"` keeps the model resident between regenerations so we
  *   don't reload weights on every request (avoids GPU/CPU thrashing).
  * - `num_predict` is Ollama's real token-cap option (the legacy `max_tokens`
@@ -88,12 +107,12 @@ async function ollamaFetch<T>(path: string, body: unknown, signal?: AbortSignal)
  *   auto-detection is usually right.
  */
 function buildOllamaOptions(opts: OllamaGenerateOptions): Record<string, unknown> {
-  const numPredict = opts.num_predict ?? opts.max_tokens ?? 8192;
+  const numPredict = opts.num_predict ?? opts.max_tokens ?? DEFAULT_NUM_PREDICT;
   return {
     temperature: opts.temperature ?? 0.7,
     top_p: opts.top_p ?? 0.9,
     num_predict: numPredict,
-    num_ctx: opts.num_ctx ?? 24576,
+    num_ctx: opts.num_ctx ?? DEFAULT_NUM_CTX,
     keep_alive: opts.keep_alive ?? "10m",
     ...(opts.num_gpu !== undefined ? { num_gpu: opts.num_gpu } : {}),
   };
@@ -105,7 +124,7 @@ function buildOllamaOptions(opts: OllamaGenerateOptions): Record<string, unknown
  * side takes a single `maxTokens` argument.
  */
 function resolveNumPredict(opts: OllamaGenerateOptions): number {
-  return opts.num_predict ?? opts.max_tokens ?? 8192;
+  return opts.num_predict ?? opts.max_tokens ?? DEFAULT_NUM_PREDICT;
 }
 export async function chat(
   messages: OllamaChatMessage[],
@@ -200,7 +219,7 @@ export async function listModels(forceRefresh = false): Promise<OllamaModelInfo[
   }
 
   try {
-    const res = await fetch(`${OLLAMA_URL}/api/tags`, { 
+    const res = await runtimeFetch(`${OLLAMA_URL}/api/tags`, { 
       signal: AbortSignal.timeout(5000),
       headers: { "Accept": "application/json" }
     });
@@ -236,7 +255,7 @@ export async function listModels(forceRefresh = false): Promise<OllamaModelInfo[
     });
     
     MODEL_CACHE_TIMESTAMP = now;
-    console.log(`[Ollama] ✅ Found ${CACHED_MODELS.length} models:`, CACHED_MODELS.map(m => m.name).join(", "));
+    log(`[Ollama] ✅ Found ${CACHED_MODELS.length} models:`, CACHED_MODELS.map(m => m.name).join(", "));
     return CACHED_MODELS;
   } catch (error) {
     CACHED_MODELS = [];

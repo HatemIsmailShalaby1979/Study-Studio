@@ -15,9 +15,7 @@ import {
   discoverInstalledVoices,
   listInstalledLanguages,
   downloadVoice,
-  unifiedVoiceCatalog,
   type DiscoveredVoiceInfo,
-  type UnifiedVoice,
 } from "@/lib/tts";
 
 // ---------------------------------------------------------------------------
@@ -104,9 +102,7 @@ function SettingsContent() {
   const {
     initialized,
     available,
-    models,
     recommendedModel,
-    message,
     providerStatuses,
     activeProviderId,
     mode,
@@ -125,6 +121,13 @@ function SettingsContent() {
   const [installedLanguages, setInstalledLanguages] = useState<string[]>([]);
   const [downloadingVoice, setDownloadingVoice] = useState<string | null>(null);
   const [voiceError, setVoiceError] = useState("");
+
+  // Model load state. A model can be *downloaded* without being *loaded*, and
+  // only a loaded model can serve a request — so the two are shown separately
+  // and a load can be triggered from here. See AUDIT.md plan item 3.7.
+  const [loadingModelId, setLoadingModelId] = useState<string | null>(null);
+  const [modelAction, setModelAction] = useState<{ ok: boolean; msg: string } | null>(null);
+  const canLoadModels = aiRuntime.supportsModelLoading(selectedProvider || undefined);
 
   // Sync the active provider from context.
   useEffect(() => {
@@ -214,6 +217,39 @@ function SettingsContent() {
     setApiKeyStatus(null);
     refreshProviders();
   }, [selectedProvider, refreshProviders]);
+
+  /**
+   * Load a downloaded model into memory, or unload a resident one.
+   *
+   * Loading is slow — a 4 GB model measured 165.9 s cold — so the button shows a
+   * busy state for the duration rather than appearing to do nothing. The
+   * provider's own timeout (600 s) is the real ceiling; this is not a spinner
+   * that gives up early.
+   */
+  const handleModelAction = useCallback(
+    async (modelId: string, action: "load" | "unload") => {
+      setLoadingModelId(modelId);
+      setModelAction(null);
+      try {
+        if (action === "load") {
+          await aiRuntime.loadModel(modelId, {}, selectedProvider || undefined);
+          setModelAction({ ok: true, msg: `Loaded ${modelId} into memory.` });
+        } else {
+          await aiRuntime.unloadModel(modelId, selectedProvider || undefined);
+          setModelAction({ ok: true, msg: `Unloaded ${modelId}.` });
+        }
+        await refreshProviders();
+      } catch (e) {
+        setModelAction({
+          ok: false,
+          msg: e instanceof Error ? e.message : `Could not ${action} ${modelId}.`,
+        });
+      } finally {
+        setLoadingModelId(null);
+      }
+    },
+    [selectedProvider, refreshProviders]
+  );
 
   const handleDownloadVoice = useCallback(async (voiceId: string) => {
     setDownloadingVoice(voiceId);
@@ -424,21 +460,73 @@ function SettingsContent() {
               Models {selectedStatus?.available ? `(${selectedStatus.models.length})` : ""}
             </label>
             {selectedStatus?.available && selectedStatus.models.length > 0 ? (
-              <div className="max-h-48 overflow-y-auto rounded-lg border border-card-border">
-                {selectedStatus.models.map((m, i) => (
-                  <div
-                    key={m.id}
-                    className={`flex items-center justify-between px-3 py-1.5 text-xs ${
-                      i !== 0 ? "border-t border-card-border" : ""
-                    } ${m.id === recommendedModel ? "bg-primary-soft/30" : ""}`}
+              <>
+                <div className="max-h-48 overflow-y-auto rounded-lg border border-card-border">
+                  {selectedStatus.models.map((m, i) => {
+                    const isLoaded = m.loaded === true;
+                    // `undefined` means the provider cannot report load state.
+                    // Showing "Downloaded" then would be a guess, so we show
+                    // nothing rather than something false.
+                    const canTell = m.loaded !== undefined;
+                    const busy = loadingModelId === m.id;
+                    return (
+                      <div
+                        key={m.id}
+                        className={`flex items-center justify-between gap-2 px-3 py-1.5 text-xs ${
+                          i !== 0 ? "border-t border-card-border" : ""
+                        } ${m.id === recommendedModel ? "bg-primary-soft/30" : ""}`}
+                      >
+                        <span className="truncate min-w-0">{m.name}</span>
+                        <span className="flex items-center gap-1.5 shrink-0">
+                          {m.id === recommendedModel && (
+                            <span className="badge badge-primary text-[9px]">Best</span>
+                          )}
+                          {canTell && (
+                            <span
+                              className={`badge text-[9px] ${
+                                isLoaded ? "badge-green" : "badge-secondary"
+                              }`}
+                              title={
+                                isLoaded
+                                  ? "Resident in memory and ready to serve"
+                                  : "Downloaded but not loaded into memory"
+                              }
+                            >
+                              {isLoaded ? "Loaded" : "Downloaded"}
+                            </span>
+                          )}
+                          {canLoadModels && canTell && !busy && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleModelAction(m.id, isLoaded ? "unload" : "load")
+                              }
+                              className="text-[10px] text-primary hover:underline"
+                            >
+                              {isLoaded ? "Unload" : "Load"}
+                            </button>
+                          )}
+                          {busy && <span className="text-[10px] text-muted">Working…</span>}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {modelAction && (
+                  <p
+                    className={`text-[11px] mt-1.5 ${
+                      modelAction.ok ? "text-accent-green" : "text-accent-red"
+                    }`}
                   >
-                    <span className="truncate">{m.name}</span>
-                    {m.id === recommendedModel && (
-                      <span className="badge badge-primary text-[9px] ml-2 shrink-0">Best</span>
-                    )}
-                  </div>
-                ))}
-              </div>
+                    {modelAction.msg}
+                  </p>
+                )}
+                {canLoadModels && (
+                  <p className="text-[11px] text-muted mt-1.5">
+                    Loading a large model can take a few minutes on a cold cache.
+                  </p>
+                )}
+              </>
             ) : (
               <p className="text-xs text-muted">
                 {selectedStatus?.available === false

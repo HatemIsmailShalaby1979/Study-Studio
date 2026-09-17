@@ -5,14 +5,26 @@
     "plugin:jest/recommended",
     "plugin:testing-library/react"
   ],
+  "parser": "@typescript-eslint/parser",
   "rules": {
     "react/no-unescaped-entities": "off",
     "@next/next/no-img-element": "off",
     "react/no-unused-prop-types": "off",
-    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "no-unused-vars": "off",
+    "@typescript-eslint/no-unused-vars": [
+      "warn",
+      {
+        "args": "after-used",
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_",
+        "caughtErrorsIgnorePattern": "^_",
+        "ignoreRestSiblings": true
+      }
+    ],
     "no-console": ["warn", { "allow": ["warn", "error"] }]
   },
   "plugins": [
+    "@typescript-eslint",
     "react-hooks",
     "jest",
     "testing-library"
@@ -24,5 +36,13 @@
     "jest": {
       "version": 29
     }
-  }
+  },
+  "overrides": [
+    {
+      "files": ["**/__tests__/**/*.{ts,tsx}", "**/*.test.{ts,tsx}"],
+      "rules": {
+        "no-console": "off"
+      }
+    }
+  ]
 }

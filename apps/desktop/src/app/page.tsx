@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Lesson } from "@/types";
 import { getProgressMap, computeStats, type JourneyStats } from "@/lib/progress";
+import { loadLibrary } from "@/lib/libraryStore";
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -24,12 +25,16 @@ export default function Home() {
 
   useEffect(() => {
     setMounted(true);
-    const stored = localStorage.getItem("study-studio-library");
-    const lessons: Lesson[] = stored
-      ? (() => { try { return JSON.parse(stored); } catch { return []; } })()
-      : [];
-    setLibrary(lessons);
-    setStats(computeStats(lessons));
+    // IndexedDB-backed, hence async. See lib/libraryStore.ts.
+    let cancelled = false;
+    loadLibrary().then((lessons) => {
+      if (cancelled) return;
+      setLibrary(lessons);
+      setStats(computeStats(lessons));
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (!mounted) {

@@ -31,8 +31,8 @@ import type {
   AIProviderStatus,
 } from "../types";
 
-const MODEL_LIST_TTL_MS = 30_000; // 30 seconds
-const DISCOVERY_TIMEOUT_MS = 5000;
+export const MODEL_LIST_TTL_MS = 30_000; // 30 seconds
+export const DISCOVERY_TIMEOUT_MS = 5000;
 
 /** Thrown on a non-2xx response. Carries the raw HTTP status for probing. */
 export class OpenAICompatibleHTTPError extends Error {
@@ -48,7 +48,7 @@ export class OpenAICompatibleHTTPError extends Error {
 }
 
 /** Raw model entry from `GET /v1/models` (extra fields vary by host). */
-interface ModelEntry {
+export interface ModelEntry {
   id: string;
   owned_by?: string;
   context_length?: number;
@@ -97,15 +97,15 @@ export class OpenAICompatibleProvider implements AIProvider {
    * `setApiKey`/`setBaseUrl` can reconfigure a long-lived singleton (the app
    * constructs providers once at module load and never replaces them).
    */
-  private apiKey: string | undefined;
-  private baseUrl: string;
-  private headers: Record<string, string> | undefined;
-  private capabilityOverrides: Partial<AIProviderCapabilities> | undefined;
+  protected apiKey: string | undefined;
+  protected baseUrl: string;
+  protected headers: Record<string, string> | undefined;
+  protected capabilityOverrides: Partial<AIProviderCapabilities> | undefined;
 
-  private entries: ModelEntry[] = [];
-  private listTimestamp = 0;
-  private embeddingsProbed = false;
-  private embeddingsSupported = false;
+  protected entries: ModelEntry[] = [];
+  protected listTimestamp = 0;
+  protected embeddingsProbed = false;
+  protected embeddingsSupported = false;
 
   constructor(options: OpenAICompatibleProviderOptions) {
     if (!options?.descriptor?.id || !options?.baseUrl) {
@@ -138,7 +138,7 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 
   /** Drop cached model list + capability probes so the next call re-discovers. */
-  private invalidateCache(): void {
+  protected invalidateCache(): void {
     this.entries = [];
     this.listTimestamp = 0;
     this.embeddingsProbed = false;
@@ -183,7 +183,7 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 
   /** Refine the protocol-contract capability report from live signals. */
-  private async refineCapabilities(models: AIModel[]): Promise<AIProviderCapabilities> {
+  protected async refineCapabilities(models: AIModel[]): Promise<AIProviderCapabilities> {
     const caps = this.capabilities();
     if (models.length === 0) return caps;
 
@@ -203,7 +203,7 @@ export class OpenAICompatibleProvider implements AIProvider {
    * Probe whether the server exposes `/v1/embeddings`. Best-effort, cached
    * for the provider lifetime. 404/405/422/501 mean "no embeddings here".
    */
-  private async probeEmbeddings(modelId: string): Promise<boolean> {
+  protected async probeEmbeddings(modelId: string): Promise<boolean> {
     if (this.embeddingsProbed) return this.embeddingsSupported;
     this.embeddingsProbed = true;
     try {
@@ -259,7 +259,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     return this.toModels();
   }
 
-  private toModels(): AIModel[] {
+  protected toModels(): AIModel[] {
     return this.entries.map((e) => ({
       id: e.id,
       name: e.id,
@@ -423,13 +423,13 @@ export class OpenAICompatibleProvider implements AIProvider {
 
   // ─── Transport internals ───────────────────────────────────────────────
 
-  private authHeaders(): Record<string, string> {
+  protected authHeaders(): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
     return { ...headers, ...this.headers };
   }
 
-  private async request<T>(
+  protected async request<T>(
     path: string,
     init: RequestInit = {},
     timeoutMs?: number
@@ -454,7 +454,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     }
   }
 
-  private buildChatBody(
+  protected buildChatBody(
     messages: AIMessage[],
     options: AICompletionOptions,
     model: string,
@@ -482,7 +482,7 @@ export class OpenAICompatibleProvider implements AIProvider {
     });
   }
 
-  private extractContent(data: ChatCompletion): string {
+  protected extractContent(data: ChatCompletion): string {
     return data.choices?.[0]?.message?.content ?? "";
   }
 
@@ -496,7 +496,7 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 }
 
-interface ChatCompletion {
+export interface ChatCompletion {
   choices?: { message?: { content?: string | null } }[];
 }
 

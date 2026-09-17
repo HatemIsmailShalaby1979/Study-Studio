@@ -12,8 +12,8 @@ import {
   type LessonProgress,
   type JourneyStats,
 } from "@/lib/progress";
-
-const FEATURED_IDS = ["podcast-studio-intro", "lesson-studio-intro"];
+import { deleteLesson, loadLibrary, saveLibrary } from "@/lib/libraryStore";
+import { removeKey } from "@/lib/storage";
 
 const FEATURED_FILES: { id: string; path: string }[] = [
   { id: "podcast-studio-intro", path: "/featured-podcast.json" },
@@ -23,8 +23,7 @@ const FEATURED_FILES: { id: string; path: string }[] = [
 async function ensureFeaturedContent(): Promise<Lesson[]> {
   const imported: Lesson[] = [];
   try {
-    const stored = localStorage.getItem("study-studio-library");
-    const library: Lesson[] = stored ? JSON.parse(stored) : [];
+    const library = await loadLibrary();
 
     for (const file of FEATURED_FILES) {
       if (library.some((l) => l.id === file.id)) continue;
@@ -36,7 +35,7 @@ async function ensureFeaturedContent(): Promise<Lesson[]> {
     }
 
     if (imported.length > 0) {
-      localStorage.setItem("study-studio-library", JSON.stringify(library));
+      await saveLibrary(library);
     }
   } catch {}
   return imported;
@@ -86,13 +85,18 @@ export default function Library() {
 
   useEffect(() => {
     setMounted(true);
-    const stored = localStorage.getItem("study-studio-library");
-    const initial: Lesson[] = stored ? (() => { try { return JSON.parse(stored); } catch { return []; } })() : [];
-    setLibrary(initial);
-    setProgress(getProgressMap());
-    setStats(computeStats(initial));
+    // The library lives in IndexedDB (see lib/libraryStore.ts) so it is no longer
+    // bounded by the ~5 MB localStorage quota. Loads are async as a result.
+    let cancelled = false;
+    loadLibrary().then((initial) => {
+      if (cancelled) return;
+      setLibrary(initial);
+      setProgress(getProgressMap());
+      setStats(computeStats(initial));
+    });
 
     ensureFeaturedContent().then((imported) => {
+      if (cancelled) return;
       if (imported.length > 0) {
         setLibrary((prev) => {
           const missing = imported.filter((l) => !prev.some((p) => p.id === l.id));
@@ -101,17 +105,11 @@ export default function Library() {
         });
       }
     });
-  }, []);
 
-  const getProgressMapSync = () => {
-    const map: Record<string, LessonProgress> = {};
-    const stored = localStorage.getItem("study-studio-progress");
-    try {
-      const parsed = stored ? JSON.parse(stored) : {};
-      if (parsed && typeof parsed === "object") Object.assign(map, parsed);
-    } catch {}
-    return map;
-  };
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const refresh = (next: Lesson[]) => {
     setLibrary(next);
@@ -126,20 +124,22 @@ export default function Library() {
   const handleDelete = (id: string) => {
     if (!confirm("Delete this lesson from your learning journey?")) return;
     const updated = library.filter((l) => l.id !== id);
-    localStorage.setItem("study-studio-library", JSON.stringify(updated));
-    localStorage.removeItem(`study-studio-quiz-${id}`);
+    // Delete the record rather than rewriting the whole library — one write
+    // instead of one per remaining lesson.
+    void deleteLesson(id);
+    removeKey(`study-studio-quiz-${id}`);
     clearProgress(id);
     refresh(updated);
   };
 
   const handleClearAll = () => {
     if (confirm("Delete all lessons from your learning journey?")) {
-      library.forEach((l) => localStorage.removeItem(`study-studio-quiz-${l.id}`));
+      library.forEach((l) => removeKey(`study-studio-quiz-${l.id}`));
       clearAllProgress();
       setLibrary([]);
       setProgress({});
       setStats(computeStats([]));
-      localStorage.removeItem("study-studio-library");
+      void saveLibrary([]);
     }
   };
 

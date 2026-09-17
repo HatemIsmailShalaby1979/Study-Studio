@@ -10,7 +10,6 @@ import {
   initialState,
   canGenerateAudio,
   canStartQuiz,
-  hasUnsavedAudio,
   isDownloadDisabled,
   isListenDisabled,
   isQuizActive,
@@ -22,6 +21,7 @@ import {
 import { isTauri } from "../lib/tauri";
 import type { Lesson } from "@/types";
 import { buildTtsText } from "../lib/tts";
+import { log } from "../lib/logger";
 
 // Service implementations for the pipeline
 const pipelineServices: PipelineServices = {
@@ -181,7 +181,7 @@ export function useTopicAudioPipeline() {
   // Metacognitive pulse handlers
   const handleMetacognitivePulse = useCallback((rating: number, feedback: string) => {
     // In a real implementation, this would send telemetry
-    console.log(`[Metacognitive Pulse] Rating: ${rating}/8, Feedback: ${feedback}`);
+    log(`[Metacognitive Pulse] Rating: ${rating}/8, Feedback: ${feedback}`);
     dispatch({ type: "HIDE_METACOGNITIVE_PULSE" });
   }, []);
 

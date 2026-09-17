@@ -51,7 +51,17 @@ html {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  /* `--font-inter` is set by next/font on <html> (see src/app/layout.tsx).
+     The literal 'Inter' is kept as the var() fallback so the declaration stays
+     valid even if the variable is somehow unset — an unresolved var() with no
+     fallback invalidates the whole font-family declaration, which would drop
+     the system stack too.
+
+     The system stack after it is deliberate, not leftover: Inter has no Arabic
+     coverage, and this app generates Arabic lessons and podcast scripts. Those
+     glyphs fall through to the platform font. */
+  font-family: var(--font-inter, 'Inter'), system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
 }
 
 @layer base {
@@ -191,9 +201,22 @@ body {
     background: var(--primary-soft);
     color: var(--primary);
   }
+  .badge-secondary {
+    background: var(--sidebar);
+    color: var(--muted);
+    border: 1px solid var(--card-border);
+  }
   .badge-green {
     background: rgba(34, 197, 94, 0.1);
     color: var(--accent-green);
+  }
+  .badge-amber {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--accent-amber);
+  }
+  .badge-red {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--accent-red);
   }
   .pill {
     display: inline-flex;

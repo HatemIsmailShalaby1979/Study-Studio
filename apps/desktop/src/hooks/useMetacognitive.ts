@@ -9,6 +9,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { quizRetentionSummary } from "@/lib/helixEvents";
 import type { QuizRetentionSummary } from "@/types";
+import { readVersioned, writeVersioned } from "@/lib/storage";
 
 export interface PulseSubmission {
   rating: number; // 1-8
@@ -29,24 +30,22 @@ interface PulseRecord {
 }
 
 function loadRecord(): PulseRecord {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as PulseRecord;
-  } catch {}
-  return {
-    topicCount: 0,
-    lastRating: null,
-    lastFeedback: "",
-    submittedAt: null,
-    lastSubmittedTopicCount: 0,
-    systemAdviceGiven: false,
-  };
+  return readVersioned<PulseRecord>(
+    STORAGE_KEY,
+    (raw) => (raw && typeof raw === "object" ? (raw as PulseRecord) : null),
+    {
+      topicCount: 0,
+      lastRating: null,
+      lastFeedback: "",
+      submittedAt: null,
+      lastSubmittedTopicCount: 0,
+      systemAdviceGiven: false,
+    }
+  );
 }
 
 function saveRecord(record: PulseRecord): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(record));
-  } catch {}
+  writeVersioned(STORAGE_KEY, record);
 }
 
 /**

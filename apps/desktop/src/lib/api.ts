@@ -12,12 +12,26 @@ import { generateLesson, generatePodcastOnly, type GenerateRequest, type Generat
 import { evaluateQuiz, type EvaluationResult } from "./evaluation";
 import { generateDiagnosticQuiz, type GenerateDiagnosticQuizOptions } from "./quizEngine";
 import { isTauri } from "./tauri";
+import { log } from "./logger";
 
 export interface ApiModel {
   id: string;
   name: string;
   size?: string;
 }
+
+/**
+ * Provider grouping is defined in `ai-runtime/providerIds.ts` and re-exported
+ * here so existing importers keep working.
+ *
+ * It lives in a leaf module because `api.ts` imports the runtime and the
+ * runtime's routing needs these lists — declaring them here would be a cycle.
+ * (The previous comment claimed `providerProbe.ts` imported them; it does not,
+ * and never did.)
+ */
+import { LOCAL_PROVIDER_IDS, ONLINE_PROVIDER_IDS } from "./ai-runtime/providerIds";
+
+export { LOCAL_PROVIDER_IDS, ONLINE_PROVIDER_IDS };
 
 export interface FetchModelsResult {
   success: boolean;
@@ -44,6 +58,16 @@ export interface RuntimeInitResult {
    * Offline / Online / Hybrid mode summary.
    */
   activeProviderId?: string;
+  /**
+   * The model that was resolved and made resident during init. Present when a
+   * model was successfully loaded (or when the provider manages its own
+   * lifecycle). Drives the "Ready — model loaded" status in the UI.
+   */
+  loadedModel?: string;
+  /** True when init actually had to load weights into memory. */
+  didLoadModel?: boolean;
+  /** Human-readable note about the model-loading step (e.g. why it was skipped). */
+  modelLoadMessage?: string;
 }
 
 /** Delay helper — returns a promise that resolves after `ms` milliseconds. */
@@ -58,11 +82,16 @@ function sleep(ms: number): Promise<void> {
  *    local server if it isn't already running.
  * 2. Retries listing models a few times to tolerate the brief window between
  *    process spawn and HTTP readiness.
- * 3. Auto-selects the recommended model so it's pinned in provider state for
- *    subsequent generation calls.
- * 4. Runs full multi-provider discovery so the Settings page can show every
+ * 3. Runs full multi-provider discovery so the Settings page can show every
  *    provider's status, and picks an active provider: local-first, else an
- *    online provider with a stored key (seamless fallback). Never throws.
+ *    online provider with a stored key (seamless fallback).
+ * 4. **Loads the selected model into memory.** On a runtime that separates
+ *    downloaded from loaded (LM Studio), this is what removes the need to
+ *    pre-load a model in the runtime's own UI. Best-effort: a failed load
+ *    degrades to a clear message, never a crash.
+ * 5. Auto-selects the recommended model so it's pinned for subsequent calls.
+ *
+ * Never throws.
  */
 export async function initializeRuntime(): Promise<RuntimeInitResult> {
   // Re-apply any persisted user config (online keys) so an online provider is
@@ -98,13 +127,15 @@ export async function initializeRuntime(): Promise<RuntimeInitResult> {
       models = await aiRuntime.listModels(undefined, true).catch(() => []);
     }
   }
+  void localReady;
 
   // Step 3 — full multi-provider discovery (best-effort, never throws).
   const providerStatuses = await aiRuntime.discoverAll().catch(() => [] as AIProviderStatus[]);
 
   // Step 4 — pick an active provider: local-first, else online with a key.
-  const localProviderIds = ["ollama", "lm-studio"];
-  const onlineProviderIds = ["openai", "openrouter"];
+  // Keep this list in sync with LOCAL_PROVIDER_IDS in AIRuntimeProvider.tsx.
+  const localProviderIds: readonly string[] = LOCAL_PROVIDER_IDS;
+  const onlineProviderIds: readonly string[] = ONLINE_PROVIDER_IDS;
   const isAvailable = (id: string) =>
     providerStatuses.find((s) => s.providerId === id && s.available);
 
@@ -143,32 +174,67 @@ export async function initializeRuntime(): Promise<RuntimeInitResult> {
   // exists (local OR online), so online-mode generation is not blocked.
   const available = Boolean(activeProviderId) && apiModels.length > 0;
 
-  if (available) {
-    console.log(
-      `[AiInit] ✅ Ready — provider=${activeProviderId}, ${apiModels.length} models, recommended: ${recommended}`
+  if (!available) {
+    // Nothing available — friendly guidance, never a crash.
+    const localDown = providerStatuses.every(
+      (s) => !localProviderIds.includes(s.providerId) || !s.available
     );
     return {
-      available: true,
-      models: apiModels,
-      recommendedModel: recommended,
+      available: false,
+      models: [],
+      recommendedModel: "",
+      message: localDown
+        ? "No local model detected. Start LM Studio or Ollama, or add an online API key in Settings to generate HTML, quizzes, and glossaries."
+        : "The AI runtime is running but has no models available. Download a model in your runtime, or check its model configuration.",
       providerStatuses,
       activeProviderId,
     };
   }
 
-  // Nothing available — friendly guidance, never a crash.
-  const localDown = providerStatuses.every(
-    (s) => !localProviderIds.includes(s.providerId) || !s.available
+  // Step 6 — guarantee the resolved model is resident in memory. This is the
+  // step that means the user never has to pre-load a model in LM Studio.
+  let loadedModel = recommended;
+  let didLoadModel = false;
+  let modelLoadMessage: string | undefined;
+  const target = recommended || apiModels[0]!.id;
+
+  const alreadyLoaded = activeStatus?.models.find((m) => m.id === target)?.loaded === true;
+
+  try {
+    if (aiRuntime.supportsModelLoading(activeProviderId || undefined)) {
+      const result = await aiRuntime.ensureModelLoaded(target, activeProviderId || undefined);
+      loadedModel = result.model;
+      didLoadModel = !alreadyLoaded;
+      modelLoadMessage = result.message;
+      log(
+        `[AiInit] 🧠 Model "${loadedModel}" ${didLoadModel ? "loaded into memory" : "already resident"}.`
+      );
+    } else {
+      // Provider manages its own lifecycle (Ollama pulls on demand, hosted
+      // APIs always serve). Nothing to do beyond pinning the model.
+      loadedModel = await aiRuntime.ensureModel(target, activeProviderId || undefined);
+      modelLoadMessage = "Provider manages its own model lifecycle.";
+    }
+  } catch (e) {
+    // A failed load is not fatal to init: the app still starts, the model list
+    // is still shown, and the user gets a specific message instead of a blank
+    // screen. Generation will surface the same error with a retry affordance.
+    modelLoadMessage = e instanceof Error ? e.message : "Could not load the selected model.";
+    console.warn("[AiInit] model load failed:", modelLoadMessage);
+  }
+
+  log(
+    `[AiInit] ✅ Ready — provider=${activeProviderId}, ${apiModels.length} models, model: ${loadedModel}`
   );
   return {
-    available: false,
-    models: [],
-    recommendedModel: "",
-    message: localDown
-      ? "No local model detected. Start Ollama or LM Studio, or add an online API key in Settings to generate HTML, quizzes, and glossaries."
-      : "The AI runtime is running but has no models available. Install one (e.g., 'ollama pull gemma3:12b') or check your provider's model configuration.",
+    available: true,
+    models: apiModels,
+    recommendedModel: recommended,
     providerStatuses,
     activeProviderId,
+    loadedModel,
+    didLoadModel,
+    modelLoadMessage,
   };
 }
 

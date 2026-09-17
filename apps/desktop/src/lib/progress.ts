@@ -1,3 +1,5 @@
+import { readVersioned, removeKey, writeVersioned } from "./storage";
+
 export type LessonStatus = "not_started" | "in_progress" | "completed";
 
 export interface LessonProgress {
@@ -41,40 +43,32 @@ function emptyProgress(): LessonProgress {
 }
 
 function safeGet(): Record<string, LessonProgress> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+  return readVersioned<Record<string, LessonProgress>>(
+    STORAGE_KEY,
+    (raw) => {
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+      return raw as Record<string, LessonProgress>;
+    },
+    {}
+  );
 }
 
+/**
+ * Persist progress.
+ *
+ * Failure is reported through `onStorageFailure` rather than swallowed — the
+ * previous empty `catch` meant a quiz result could silently fail to save.
+ */
 function safeSet(map: Record<string, LessonProgress>): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
-  } catch {
-    // Storage unavailable; progress is best-effort only.
-  }
+  writeVersioned(STORAGE_KEY, map);
 }
 
 function getStudyDays(): string[] {
-  try {
-    const raw = localStorage.getItem(DAYS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  return readVersioned<string[]>(DAYS_KEY, (raw) => (Array.isArray(raw) ? (raw as string[]) : null), []);
 }
 
 function setStudyDays(days: string[]): void {
-  try {
-    localStorage.setItem(DAYS_KEY, JSON.stringify(days));
-  } catch {
-    // Best-effort only.
-  }
+  writeVersioned(DAYS_KEY, days);
 }
 
 function recordStudyDay(): void {
@@ -133,12 +127,8 @@ export function clearProgress(lessonId: string): void {
 }
 
 export function clearAllProgress(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(DAYS_KEY);
-  } catch {
-    // Best-effort only.
-  }
+  removeKey(STORAGE_KEY);
+  removeKey(DAYS_KEY);
 }
 
 export function computeStreak(days: string[]): number {

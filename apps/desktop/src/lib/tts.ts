@@ -64,10 +64,6 @@ export function buildTtsText(lesson: Lesson): string {
 }
 
 /** Detect whether a lesson's content is primarily Arabic. */
-function detectLessonLanguage(lesson: Lesson): "en" | "ar" {
-  const text = `${lesson.title ?? ""} ${lesson.sections.map((s) => s.heading).join(" ")}`;
-  return /[\u0600-\u06FF]/.test(text) ? "ar" : "en";
-}
 
 /**
  * Generate a real audio file for the lesson. Only available inside the Tauri
@@ -220,7 +216,14 @@ export async function isTtsAvailable(): Promise<boolean> {
  * This is the single source of truth for voice dropdowns going forward.
  */
 export async function unifiedVoiceCatalog(): Promise<UnifiedVoice[]> {
-  const [diskVoices, curatedAvailable, webSpeechVoices] = await Promise.all([
+  // The second element is deliberately elided. `listAvailableVoices()` returns
+  // the curated ids the backend reports, but step 2 below filters the static
+  // VOICES seed list instead — so the result was fetched on every catalog build
+  // and discarded. The call is kept (not removed) because dropping it would
+  // change backend behaviour without knowing the Rust contract. See AUDIT.md
+  // §5: either use this list to decide which seeds are downloadable, or delete
+  // the call. Tracked, not silently ignored.
+  const [diskVoices, , webSpeechVoices] = await Promise.all([
     discoverInstalledVoices(),
     isTauri() ? listAvailableVoices().catch(() => []) : Promise.resolve([]),
     discoverWebSpeechVoices(),

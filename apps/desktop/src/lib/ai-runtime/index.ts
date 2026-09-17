@@ -6,6 +6,7 @@
 import { AIRuntime } from "./runtime";
 import { OllamaProvider } from "./providers/ollama";
 import { OpenAICompatibleProvider, openAIProviderProfiles } from "./providers/openaiCompatible";
+import { createLMStudioProvider } from "./providers/lmStudio";
 import { applyStoredConfigs } from "./providerStore";
 
 export { AIRuntime } from "./runtime";
@@ -22,6 +23,7 @@ export {
   OpenAICompatibleHTTPError,
   openAIProviderProfiles,
 } from "./providers/openaiCompatible";
+export { LMStudioProvider, createLMStudioProvider, lmStudioOrigin } from "./providers/lmStudio";
 export {
   getProviderConfig,
   getAllProviderConfigs,
@@ -58,6 +60,8 @@ export type {
   AICompletionOptions,
   AIModel,
   AIModelProfile,
+  AIModelLoadOptions,
+  AIModelLoadResult,
   AICapability,
   AIProviderCapabilities,
   AIHealth,
@@ -81,15 +85,22 @@ export function createRuntime(...providers: import("./types").AIProvider[]): AIR
 
 /**
  * OpenAI-compatible profiles registered in the default singleton. Each is a
- * configuration profile of ONE provider class. Ollama remains the default;
- * these are additional runtimes the app can switch to with zero code changes.
- * Order matters for the Settings UI: local-first, then online.
+ * configuration profile of ONE provider class. Ollama and LM Studio are
+ * registered as their own providers above; these are additional runtimes the
+ * app can switch to with zero code changes. Order matters for the Settings UI:
+ * local-first, then online.
+ *
+ * NOTE: `openAIProviderProfiles.lmStudio` still exists and still works — it is
+ * the plain `/v1` profile, useful when a server has no native API. The app
+ * registers the *native* LM Studio provider instead, because only it can load a
+ * model on demand. See providers/lmStudio.ts.
  */
-const DEFAULT_OPENAI_PROFILES = ["lmStudio", "openai", "openRouter"] as const;
+const DEFAULT_OPENAI_PROFILES = ["openai", "openRouter"] as const;
 
 /** App-wide singleton with the default provider set. */
 export const aiRuntime: AIRuntime = createRuntime(
   new OllamaProvider(),
+  createLMStudioProvider(),
   ...DEFAULT_OPENAI_PROFILES.map(
     (name) => new OpenAICompatibleProvider(openAIProviderProfiles[name]!())
   )

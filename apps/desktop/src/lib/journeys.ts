@@ -5,6 +5,8 @@
 // container, and run through the same 3-step pipeline (HTML -> Audio ->
 // Save/Listen). Journeys persist to localStorage alongside the library.
 
+import { readVersioned, writeVersioned } from "./storage";
+
 export interface Journey {
   id: string;
   title: string;
@@ -18,27 +20,55 @@ export interface Journey {
 
 const JOURNEYS_KEY = "study-studio-journeys";
 
-export function loadJourneys(): Journey[] {
-  try {
-    const raw = localStorage.getItem(JOURNEYS_KEY);
-    if (raw) return JSON.parse(raw) as Journey[];
-  } catch {}
-  return [];
+/**
+ * v0 was a bare JSON array with no wrapper; v1 is the same array, versioned.
+ * Dropping entries that are not journeys is deliberate — an array of junk is
+ * corruption, and one bad row should not cost the user the rest.
+ */
+function migrateJourneys(raw: unknown): Journey[] | null {
+  if (!Array.isArray(raw)) return null;
+  return raw.filter(
+    (j): j is Journey =>
+      j !== null && typeof j === "object" && typeof (j as Journey).id === "string"
+  );
 }
 
+export function loadJourneys(): Journey[] {
+  return readVersioned<Journey[]>(JOURNEYS_KEY, migrateJourneys, []);
+}
+
+/**
+ * Persist journeys.
+ *
+ * A failure is reported through `onStorageFailure` rather than swallowed — the
+ * old version's empty `catch` meant a journey could silently fail to save.
+ */
 export function saveJourneys(journeys: Journey[]): void {
-  try {
-    localStorage.setItem(JOURNEYS_KEY, JSON.stringify(journeys));
-  } catch {}
+  writeVersioned(JOURNEYS_KEY, journeys);
 }
 
 export function getJourney(id: string): Journey | null {
   return loadJourneys().find((j) => j.id === id) ?? null;
 }
 
+/**
+ * Generate a journey id.
+ *
+ * `crypto.randomUUID` only exists in a secure context (https, localhost, or the
+ * Tauri shell). When it is missing the old fallback was `j-${Date.now()}` — and
+ * `Date.now()` has millisecond resolution, so two journeys created in the same
+ * tick got the *same* id. `deleteJourney` filters by id, so deleting one would
+ * silently delete both. The random suffix removes that collision.
+ */
+function generateJourneyId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return uuid;
+  return `j-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function createJourney(title: string, opts?: Partial<Journey>): Journey {
   const journey: Journey = {
-    id: crypto?.randomUUID?.() ?? `j-${Date.now()}`,
+    id: generateJourneyId(),
     title: title.trim() || "Untitled Journey",
     description: opts?.description,
     createdAt: new Date().toISOString(),

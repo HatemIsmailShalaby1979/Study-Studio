@@ -24,12 +24,13 @@ import {
 } from "@/lib/tts";
 import { useTopicAudioPipeline } from "@/hooks/useTopicAudioPipeline";
 import { buildTtsText } from "@/lib/tts";
+import { useLessonPersistence } from "@/hooks/useLessonPersistence";
 
 export default function LessonPage() {
+  const persistence = useLessonPersistence();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [lesson, setLesson] = useState<Lesson | null>(null);
-  const [activeSection, setActiveSection] = useState(0);
   const [showGlossary, setShowGlossary] = useState(false);
   const [showQuiz, setShowQuiz] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -55,16 +56,28 @@ export default function LessonPage() {
   const pendingActionRef = useRef<(() => void) | null>(null);
 
   const pipeline = useTopicAudioPipeline();
+  // The load effect below seeds the pipeline once per lesson. It must NOT list
+  // `pipeline` as a dependency: the hook returns a fresh object every render,
+  // and seeding dispatches state — so depending on it would re-seed on every
+  // state change, forever. A ref reaches the current pipeline without making
+  // the effect re-run, which resolves react-hooks/exhaustive-deps correctly
+  // instead of suppressing it.
+  const pipelineRef = useRef(pipeline);
+  pipelineRef.current = pipeline;
 
   const lessonId = searchParams.get("id") || "";
 
   useEffect(() => {
     setMounted(true);
-    const stored = localStorage.getItem("study-studio-library");
-    if (!stored) { router.push("/"); return; }
-    const library: Lesson[] = JSON.parse(stored);
-    const found = library.find((l) => l.id === lessonId);
-    if (found) {
+    // IndexedDB-backed, hence async. See lib/libraryStore.ts. `getLesson` reads a
+    // single record instead of the whole library — this page only needs one.
+    let cancelled = false;
+    persistence.load(lessonId).then((found) => {
+      if (cancelled) return;
+      if (!found) {
+        router.push("/");
+        return;
+      }
       setLesson(found);
       setAudioPath(found.audioPath ?? null);
       if (found.ttsVoice) setCurrentVoice(found.ttsVoice);
@@ -77,13 +90,15 @@ export default function LessonPage() {
 
       // Seed the 3-stage pipeline: Step 1 (HTML) is already complete for a
       // persisted lesson; Step 3 resumes from an existing audio file if any.
-      pipeline.seedContent(found.title || "Lesson", buildTtsText(found));
+      pipelineRef.current.seedContent(found.title || "Lesson", buildTtsText(found));
       if (found.audioPath) {
-        pipeline.seedAudio({ audiobook: found.audioPath, podcast: found.audioPath });
+        pipelineRef.current.seedAudio({ audiobook: found.audioPath, podcast: found.audioPath });
       }
-    }
-    else { router.push("/"); }
-  }, [lessonId, router]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [lessonId, router, persistence]);
 
   // Load voice availability + unified voice catalog
   useEffect(() => {
@@ -99,20 +114,10 @@ export default function LessonPage() {
       const scrollTop = globalThis.scrollY;
       const docHeight = document.documentElement.scrollHeight - globalThis.innerHeight;
       setProgress(docHeight > 0 ? Math.min((scrollTop / docHeight) * 100, 100) : 0);
-      sectionRefs.current.forEach((ref, i) => {
-        if (ref) {
-          const rect = ref.getBoundingClientRect();
-          if (rect.top <= 150 && rect.bottom >= 100) setActiveSection(i);
-        }
-      });
     };
     globalThis.addEventListener("scroll", handleScroll);
     return () => globalThis.removeEventListener("scroll", handleScroll);
   }, [lesson]);
-
-  const scrollToSection = (index: number) => {
-    sectionRefs.current[index]?.scrollIntoView({ behavior: "smooth" });
-  };
 
   const handleRegenerate = () => {
     if (lesson) {
@@ -130,19 +135,10 @@ export default function LessonPage() {
   const handleAudioReady = (path: string) => {
     setAudioPath(path);
     if (!lesson) return;
-    try {
-      const stored = localStorage.getItem("study-studio-library");
-      if (!stored) return;
-      const library: Lesson[] = JSON.parse(stored);
-      const idx = library.findIndex((l) => l.id === lesson.id);
-      const item = library[idx];
-      if (item) {
-        library[idx] = { ...item, audioPath: path };
-        localStorage.setItem("study-studio-library", JSON.stringify(library));
-      }
-    } catch {
-      // Ignore a corrupt library; the in-memory state is still correct.
-    }
+    // A single-record upsert, not a read-modify-write of the whole library.
+    // The old version parsed every lesson to change one field, and its failure
+    // was silent.
+    void persistence.updateAudioPath(lesson, path);
   };
 
   const handleDownloadVoice = async (voiceId: string) => {
@@ -185,11 +181,13 @@ export default function LessonPage() {
       });
       const updatedLesson = { ...lesson, podcastScript: result.podcastScript };
       setLesson(updatedLesson);
-      const stored = localStorage.getItem("study-studio-library");
-      const library: Lesson[] = stored ? JSON.parse(stored) : [];
-      const idx = library.findIndex((l) => l.id === lesson.id);
-      if (idx >= 0) library[idx] = updatedLesson;
-      localStorage.setItem("study-studio-library", JSON.stringify(library));
+      // Upsert, so a lesson missing from the store is inserted rather than
+      // silently skipped (the old code only wrote when `idx >= 0`).
+      // Guarded: the store treats podcastScript as authoritative once set, so
+      // an undefined script must not be written over an existing one.
+      if (result.podcastScript) {
+        void persistence.updatePodcastScript(lesson, result.podcastScript);
+      }
     } catch (e) {
       setPodcastError(e instanceof Error ? e.message : "Failed to generate podcast");
     } finally {
@@ -259,7 +257,7 @@ export default function LessonPage() {
   const isPrimaryVoiceAvailable = langVoices.length === 0 || availableVoices.includes(primaryVoice);
 
   return (
-    <div className="flex flex-col min-h-screen pt-16" dir={isRtl ? "rtl" : undefined}>
+    <div className="flex flex-col min-h-screen pt-16" data-testid="lesson-root" dir={isRtl ? "rtl" : undefined}>
       {/* Tab bar */}
       <LessonTabs activeTab={activeTab} onTabChange={handleTabChange} />
 

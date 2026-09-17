@@ -71,6 +71,20 @@ export function toFriendlyError(error: unknown): FriendlyError {
   try {
     const raw = pickMessage(error).toLowerCase();
 
+    // API key / auth issues.
+    //
+    // Checked BEFORE the local-server rule on purpose: a 401 or 403 arriving
+    // from a local port (e.g. http://localhost:1234) contains "localhost" too,
+    // and reporting an auth failure as "server unreachable" sends the user to
+    // restart a server that is running perfectly well.
+    if (
+      /unauthor|401|403|invalid api key|api key|forbidden|authentication/.test(
+        raw
+      )
+    ) {
+      return MESSAGES["api-key-invalid"];
+    }
+
     // Local server unreachable — Ollama / LM Studio down, refused, timeout.
     if (
       /localhost|127\.0\.0\.1|11434|1234|econnrefused|fetch failed|network request failed/.test(
@@ -79,15 +93,6 @@ export function toFriendlyError(error: unknown): FriendlyError {
       /ollama|lm studio|lm-studio/.test(raw)
     ) {
       return MESSAGES["local-server-unreachable"];
-    }
-
-    // API key / auth issues.
-    if (
-      /unauthor|401|403|invalid api key|api key|forbidden|authentication/.test(
-        raw
-      )
-    ) {
-      return MESSAGES["api-key-invalid"];
     }
 
     // TTS / audio-specific failures.
@@ -99,7 +104,12 @@ export function toFriendlyError(error: unknown): FriendlyError {
     }
 
     // Generic network.
-    if (/network|timeout|dns|enotfound|econnreset|offline/.test(raw)) {
+    //
+    // "timed out" / "time out" are listed alongside "timeout" on purpose: the
+    // literal substring "timeout" does not appear in "request timed out", which
+    // is how most HTTP clients actually phrase it — so that phrasing used to
+    // fall through to the generic message. Covered by friendlyErrors.test.ts.
+    if (/network|timeout|timed out|time out|dns|enotfound|econnreset|offline/.test(raw)) {
       return MESSAGES.network;
     }
 

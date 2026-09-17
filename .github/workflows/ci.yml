@@ -1,0 +1,133 @@
+# Continuous integration for the Study Studio desktop app.
+#
+# WHY THIS FILE EXISTS
+#
+# Before this, the only workflow in the repo was `.github/workflows/deno.yml`,
+# which runs `deno lint` and `deno test -A` at the repository root. There are no
+# Deno tests in this repo, so that test step passes vacuously — and none of the
+# seven gates that actually define quality here (`typecheck`, `lint:ci`,
+# `test:ci`, `check:coverage`, `check:versions`, `build:prod`, `check:tokens`)
+# ran anywhere except on a developer's machine, enforced by nothing but habit.
+# A green check on a pull request therefore meant "deno lint was happy", not
+# "the app builds and its 525 tests pass".
+#
+# JOBS ARE THE PARALLELISM UNIT
+#
+# These three jobs share no state, so GitHub runs them on separate runners
+# concurrently and the wall-clock cost is max(job) rather than sum(job). Locally
+# the equivalent parallelism comes from `npm run verify` (scripts/verify.mjs),
+# which does the same thing with concurrent processes on one machine.
+#
+#   static  typecheck + lint + version manifests   (~40 s)
+#   test    jest with coverage + coverage floors   (~50 s)
+#   build   static export + design-token guard     (~35 s)
+#
+# A change that breaks something in all three areas fails all three in one run
+# instead of revealing them one at a time.
+
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+# A new push to the same branch makes the in-flight run obsolete. Cancelling it
+# frees the runner instead of letting a stale result land after the new one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: apps/desktop
+
+jobs:
+  static:
+    name: typecheck, lint, versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      # `npm ci` (not `install`) so the lockfile is authoritative and a drifted
+      # lockfile fails the build instead of being silently rewritten.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Zero-warning floor. See MEMORY.md: do not add eslint-disable comments to
+      # get under this — fix the cause, or use src/lib/logger.ts.
+      - name: Lint (max-warnings 0)
+        run: npm run lint:ci
+
+      # Cheapest gate; also asserts root/desktop/tauri.conf.json/Cargo.toml
+      # agree on the version.
+      - name: Version manifests agree
+        run: npm run check:versions
+
+  test:
+    name: tests and coverage floors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # --ci --coverage writes coverage/coverage-summary.json, which the floor
+      # check below reads. The two cannot be split across jobs without passing
+      # the artifact between them.
+      - name: Tests with coverage
+        run: npm run test:ci
+
+      # Enforces the layered floors: per-directory averages AND per-file floors,
+      # plus a rule that no file of consequence may sit at zero coverage.
+      - name: Coverage floors
+        run: npm run check:coverage
+
+  build:
+    name: static export and design tokens
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `output: "export"` — this is the artifact the Tauri shell bundles, so a
+      # build break is a release break even when every test passes.
+      - name: Build static export
+        run: npm run build:prod
+
+      # Must run AFTER the build: it reads the emitted CSS in out/_next/static/css
+      # and fails when a token is defined in globals.css but missing from
+      # tailwind.config.ts — a mistake neither tsc nor ESLint can see.
+      - name: Design tokens resolve
+        run: npm run check:tokens

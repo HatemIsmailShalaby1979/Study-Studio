@@ -52,7 +52,14 @@ const LOCAL_PROBE_TARGETS: LocalProbeTarget[] = [
   {
     id: "lm-studio",
     name: "Local (LM Studio)",
-    urls: ["http://localhost:1234/v1/models"],
+    // The native endpoint is listed first because it is the one the provider
+    // actually uses. `/v1/models` is kept as a fallback for a server that has
+    // the OpenAI-compatible surface enabled but is proxied in a way that hides
+    // `/api/v1`. Either answering is enough to call LM Studio up.
+    urls: [
+      "http://localhost:1234/api/v1/models",
+      "http://localhost:1234/v1/models",
+    ],
   },
   {
     id: "localai",

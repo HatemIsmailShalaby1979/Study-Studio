@@ -1,7 +1,10 @@
-/** @type {import('next').NextConfig} */
+import bundleAnalyzer from "@next/bundle-analyzer";
+
+/**
+ * Static export — produces ./out for Tauri to bundle.
+ * Dev mode (next dev) is unaffected; the export only happens at build time.
+ */
 const nextConfig = {
-  // Static export — produces ./out directory for Tauri to bundle.
-  // Dev mode (next dev) is unaffected; the export only happens at build time.
   output: "export",
   images: {
     unoptimized: true,
@@ -12,4 +15,11 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+// `npm run analyze` opens the treemap. Without ANALYZE=true this is a
+// pass-through wrapper, so normal builds are unaffected.
+const withAnalyzer = bundleAnalyzer({
+  enabled: process.env.ANALYZE === "true",
+  openAnalyzer: true,
+});
+
+export default withAnalyzer(nextConfig);
