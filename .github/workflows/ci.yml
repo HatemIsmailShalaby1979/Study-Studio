@@ -5,25 +5,29 @@
 # Before this, the only workflow in the repo was `.github/workflows/deno.yml`,
 # which runs `deno lint` and `deno test -A` at the repository root. There are no
 # Deno tests in this repo, so that test step passes vacuously — and none of the
-# seven gates that actually define quality here (`typecheck`, `lint:ci`,
-# `test:ci`, `check:coverage`, `check:versions`, `build:prod`, `check:tokens`)
-# ran anywhere except on a developer's machine, enforced by nothing but habit.
-# A green check on a pull request therefore meant "deno lint was happy", not
-# "the app builds and its 525 tests pass".
+# gates that actually define quality here (`typecheck`, `lint:ci`, `test:ci`,
+# `check:coverage`, `check:versions`, `build:prod`, `check:tokens`,
+# `check:mutations`) ran anywhere except on a developer's machine, enforced by
+# nothing but habit. A green check on a pull request therefore meant "deno lint
+# was happy", not "the app builds and its tests pass".
 #
 # JOBS ARE THE PARALLELISM UNIT
 #
-# These three jobs share no state, so GitHub runs them on separate runners
+# These four jobs share no state, so GitHub runs them on separate runners
 # concurrently and the wall-clock cost is max(job) rather than sum(job). Locally
 # the equivalent parallelism comes from `npm run verify` (scripts/verify.mjs),
 # which does the same thing with concurrent processes on one machine.
 #
-#   static  typecheck + lint + version manifests   (~40 s)
-#   test    jest with coverage + coverage floors   (~50 s)
-#   build   static export + design-token guard     (~35 s)
+#   static     typecheck + lint + version manifests   (~40 s)
+#   test       jest with coverage + coverage floors   (~50 s)
+#   build      static export + design-token guard     (~35 s)
+#   mutations  targeted mutation testing              (~60 s)
 #
-# A change that breaks something in all three areas fails all three in one run
+# A change that breaks something in several areas fails all of them in one run
 # instead of revealing them one at a time.
+#
+# The mutations job is the one gate that cannot also be a local `verify` default
+# — see the comment on that job for why.
 
 name: CI
 
@@ -131,3 +135,32 @@ jobs:
       # tailwind.config.ts — a mistake neither tsc nor ESLint can see.
       - name: Design tokens resolve
         run: npm run check:tokens
+
+  mutations:
+    name: mutation testing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Asks the question coverage cannot: if I break this line, does anything
+      # fail? Each mutation rewrites a source file, runs the focused test that
+      # should catch it, and restores the file. A mutation the suite still passes
+      # is a SURVIVOR — the behaviour is not actually pinned, and the test
+      # advertises safety it does not provide.
+      #
+      # This runs in CI rather than in the local `verify` default because the
+      # harness refuses to run on a dirty tree: it restores from a snapshot, so
+      # running over uncommitted edits would silently discard them. A CI checkout
+      # is always clean, which is the only place it can run unconditionally.
+      - name: Mutation testing
+        run: npm run check:mutations

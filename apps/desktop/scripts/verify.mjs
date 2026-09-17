@@ -30,17 +30,37 @@
 //   wave 1 (parallel)  versions, typecheck, lint, test      <- independent
 //   wave 2 (parallel)  coverage (needs test), build         <- both depend on wave 1
 //   wave 3             tokens (needs build)
+//   wave 4             mutations (--with-mutations only)
 //
 // `check:coverage` reads the coverage summary `test:ci` writes, and
 // `check:tokens` reads the CSS `build:prod` emits, so those edges are real and
 // cannot be flattened away.
 //
+// WHY MUTATION TESTING IS NOT A DEFAULT GATE
+//
+// `check:mutations` rewrites source files to check that the suite notices. That
+// makes it unusable as a default here for two independent reasons:
+//
+//  1. It would have to run ALONE. Any gate reading those files concurrently
+//     would see mutated code and report a phantom failure, so it cannot share a
+//     wave with typecheck, lint, test or build.
+//  2. It refuses to run at all when the files it mutates have uncommitted
+//     changes — it restores from a snapshot, so running over your edits would
+//     silently discard them. During normal development that is most of the time,
+//     which would make `npm run verify` fail for a reason that has nothing to do
+//     with code quality.
+//
+// So it is opt-in locally (`--with-mutations`, for when your tree is clean) and
+// BLOCKING in CI, where the checkout is always clean. That is the gate that
+// actually matters: it is what stops a test that cannot fail from being merged.
+//
 // USAGE
 //
-//   npm run verify              # parallel (default)
-//   npm run verify -- --serial  # same gates, one at a time (low-RAM machines,
-//                               # or when you want readable interleaved logs)
+//   npm run verify                    # parallel (default)
+//   npm run verify -- --serial        # same gates, one at a time (low-RAM
+//                                     # machines, or readable interleaved logs)
 //   npm run verify -- --fail-fast
+//   npm run verify -- --with-mutations  # adds wave 4; requires a clean tree
 //
 // Exits 0 only when every gate passed.
 
@@ -49,6 +69,8 @@ import { performance } from "node:perf_hooks";
 
 const SERIAL = process.argv.includes("--serial");
 const FAIL_FAST = process.argv.includes("--fail-fast");
+// Opt-in. See "WHY MUTATION TESTING IS NOT A DEFAULT GATE" above.
+const WITH_MUTATIONS = process.argv.includes("--with-mutations");
 
 /** Every gate, with its dependencies expressed as step ids. */
 const STEPS = {
@@ -59,6 +81,9 @@ const STEPS = {
   coverage: { cmd: "npm run check:coverage", label: "coverage floors", needs: ["test"] },
   build: { cmd: "npm run build:prod", label: "build (static export)", needs: [] },
   tokens: { cmd: "npm run check:tokens", label: "design tokens", needs: ["build"] },
+  ...(WITH_MUTATIONS
+    ? { mutations: { cmd: "npm run check:mutations", label: "mutation testing", needs: [] } }
+    : {}),
 };
 
 /** Wave membership. Order within a wave does not matter — they run together. */
@@ -66,6 +91,9 @@ const WAVES = [
   ["versions", "typecheck", "lint", "test"],
   ["coverage", "build"],
   ["tokens"],
+  // Alone, and last: this gate rewrites source files, so nothing else may be
+  // reading them while it runs.
+  ...(WITH_MUTATIONS ? [["mutations"]] : []),
 ];
 
 // `next build` deletes `.next/` and `.next/export` wholesale, which trips the

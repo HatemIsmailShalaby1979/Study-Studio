@@ -70,11 +70,27 @@ const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..");
  */
 const MUTATIONS = [
   {
-    id: "runtime-select-provider-every-to-some",
+    id: "runtime-session-every-to-some",
     file: "src/lib/ai-runtime/runtime.ts",
-    why: "selectProvider must require ALL capabilities, not merely one",
+    why: "a session-pinned provider must satisfy ALL required capabilities, not merely one",
     find: "if (p && required.every((c) => supports(p.capabilities(), c))) return p;\n    }\n\n    if (this.config.defaultProviderId) {",
     replace: "if (p && required.some((c) => supports(p.capabilities(), c))) return p;\n    }\n\n    if (this.config.defaultProviderId) {",
+    tests: ["src/lib/ai-runtime/__tests__/runtime.test.ts"],
+  },
+  {
+    id: "runtime-default-every-to-some",
+    file: "src/lib/ai-runtime/runtime.ts",
+    why: "a configured default provider must satisfy ALL required capabilities, not merely one",
+    find: "    if (this.config.defaultProviderId) {\n      const p = this.providers.get(this.config.defaultProviderId);\n      if (p && required.every((c) => supports(p.capabilities(), c))) return p;",
+    replace: "    if (this.config.defaultProviderId) {\n      const p = this.providers.get(this.config.defaultProviderId);\n      if (p && required.some((c) => supports(p.capabilities(), c))) return p;",
+    tests: ["src/lib/ai-runtime/__tests__/runtime.test.ts"],
+  },
+  {
+    id: "runtime-candidate-filter-every-to-some",
+    file: "src/lib/ai-runtime/runtime.ts",
+    why: "the fallback scan must require ALL required capabilities, not merely one",
+    find: "      .filter((p) => required.every((c) => supports(p.capabilities(), c)));",
+    replace: "      .filter((p) => required.some((c) => supports(p.capabilities(), c)));",
     tests: ["src/lib/ai-runtime/__tests__/runtime.test.ts"],
   },
   {
@@ -191,7 +207,17 @@ const MUTATIONS = [
   },
 ];
 
-const JEST = join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "jest.cmd" : "jest");
+// Invoke Jest through the Node binary rather than the `node_modules/.bin` shim.
+//
+// The shim was the first bug this harness had, and it hid itself well: Node 22
+// refuses to spawn a `.cmd` without `shell: true` (the CVE-2024-27980
+// hardening), so `spawnSync` returned `status: null` with `error.code: EINVAL`
+// for every mutation. The harness interpreted `status === null` as "timed out",
+// mutated 14 source files, ran zero tests, restored them, and reported that it
+// could not evaluate anything — all in 5 seconds. Going through
+// `process.execPath` + the Jest entry point needs no shell and behaves the same
+// on Windows and Linux.
+const JEST = join(ROOT, "node_modules", "jest", "bin", "jest.js");
 
 let inFlight = null;
 
@@ -237,21 +263,55 @@ function assertClean(files) {
   }
 }
 
+/**
+ * Preflight. The harness WRITES to source files, so it must not start unless it
+ * can actually run the tests that are supposed to catch the mutation. Without
+ * this, a broken Jest invocation rewrites 14 files, evaluates nothing, and
+ * reports an unhelpful "could not be evaluated" for each — which is exactly what
+ * happened on this script's first ever run.
+ */
+function assertJestRunnable() {
+  const res = spawnSync(process.execPath, [JEST, "--version"], { cwd: ROOT, encoding: "utf8" });
+  if (res.error || res.status !== 0) {
+    const why = res.error ? (res.error.code ?? res.error.message) : `exit code ${res.status}`;
+    console.error(
+      "check:mutations — cannot run Jest, so refusing to start.\n" +
+        "                  Every mutation would rewrite a source file for nothing:\n" +
+        `                    ${why}\n`
+    );
+    process.exit(3);
+  }
+}
+
+/**
+ * Match on LF-normalised text, then put the file's own line endings back.
+ *
+ * The patterns above are authored with `\n`, but not every file in this tree
+ * uses LF — `LessonContent.tsx` is CRLF. Comparing raw bytes therefore reported
+ * a perfectly live guard as STALE, so the harness silently stopped testing it.
+ */
+function normaliseEol(text) {
+  return text.replace(/\r\n/g, "\n");
+}
+
 function runTests(tests) {
-  const res = spawnSync(JEST, ["--ci", "--silent", "--coverage=false", ...tests], {
+  const res = spawnSync(process.execPath, [JEST, "--ci", "--silent", "--coverage=false", ...tests], {
     cwd: ROOT,
     encoding: "utf8",
     env: { ...process.env, CODEBUDDY_SAFE_DELETE_ENABLED: "0" },
     timeout: 180_000,
   });
-  // `status` is null when the run timed out or was killed — treat as not-caught
-  // rather than crashing, and say so.
-  return { code: res.status, timedOut: res.status === null };
+  // Distinguish "could not start" from "started and timed out". Collapsing both
+  // into `status === null` is what disguised the EINVAL above as a timeout.
+  if (res.error) return { failure: `could not spawn jest (${res.error.code ?? res.error.message})` };
+  if (res.status === null) return { failure: "test run timed out" };
+  return { code: res.status };
 }
 
 function main() {
   const files = [...new Set(MUTATIONS.map((m) => m.file))];
   assertClean(files);
+  assertJestRunnable();
 
   console.log(`\ncheck:mutations — ${MUTATIONS.length} targeted mutations\n`);
 
@@ -261,7 +321,9 @@ function main() {
 
   for (const m of MUTATIONS) {
     const path = join(ROOT, m.file);
-    const original = readFileSync(path, "utf8");
+    const rawOriginal = readFileSync(path, "utf8");
+    const usesCrlf = rawOriginal.includes("\r\n");
+    const original = normaliseEol(rawOriginal);
     const occurrences = original.split(m.find).length - 1;
 
     if (occurrences !== 1) {
@@ -271,15 +333,17 @@ function main() {
       continue;
     }
 
-    inFlight = { path, rel: m.file, original };
+    // Snapshot the ORIGINAL bytes, so restore() is exact even for CRLF files.
+    inFlight = { path, rel: m.file, original: rawOriginal };
     try {
-      writeFileSync(path, original.replace(m.find, m.replace));
-      const { code, timedOut } = runTests(m.tests);
+      const mutated = original.replace(m.find, m.replace);
+      writeFileSync(path, usesCrlf ? mutated.replace(/\n/g, "\r\n") : mutated);
 
-      if (timedOut) {
-        errored.push({ m, reason: "test run timed out" });
-        console.log(`  ERROR    ${m.id}  (timed out)`);
-      } else if (code === 0) {
+      const outcome = runTests(m.tests);
+      if (outcome.failure) {
+        errored.push({ m, reason: outcome.failure });
+        console.log(`  ERROR    ${m.id}  (${outcome.failure})`);
+      } else if (outcome.code === 0) {
         survivors.push(m);
         console.log(`  SURVIVED ${m.id}`);
       } else {

@@ -139,6 +139,7 @@ dependency waves and **reports every failure rather than the first**:
 wave 1 (parallel)  versions, typecheck, lint, test      <- independent
 wave 2 (parallel)  coverage (needs test), build         <- depend on wave 1
 wave 3             tokens (needs build)
+wave 4             mutations (--with-mutations only)
 ```
 
 The waves are not stylistic. `check:coverage` reads the summary `test:ci` writes,
@@ -146,9 +147,16 @@ and `check:tokens` reads the CSS `build:prod` emits — those edges are real and
 cannot be flattened. `npm run verify:serial` runs the identical gates one at a
 time for low-RAM machines.
 
+Wave 4 is opt-in because `check:mutations` **rewrites source files**. It has to
+run alone — any gate reading those files concurrently would see mutated code and
+report a phantom failure — and it refuses to start when the files it mutates have
+uncommitted changes, because it restores from a snapshot and running over your
+edits would silently discard them. Making it a default would fail `verify` for a
+reason that has nothing to do with code quality.
+
 ### Stage 2 — `.github/workflows/ci.yml`
 
-Three jobs, because GitHub runs them on **separate machines** — genuine
+Four jobs, because GitHub runs them on **separate machines** — genuine
 parallelism with no CPU contention:
 
 | Job | Gates |
@@ -156,6 +164,11 @@ parallelism with no CPU contention:
 | `static` | typecheck, lint:ci, check:versions |
 | `test` | test:ci, check:coverage |
 | `build` | build:prod, check:tokens |
+| `mutations` | check:mutations |
+
+The `mutations` job is blocking, and CI is the only place it can be: a fresh
+checkout is always clean, which is exactly the precondition the harness needs.
+This is the gate that stops a test which cannot fail from being merged.
 
 `concurrency` cancels superseded runs so a stale result cannot land after a newer
 one. Dependencies install with `npm ci` against the committed lockfile, so a
@@ -317,19 +330,15 @@ Honest list, highest value first.
    exercises a real provider end to end. That is what the nightly live lane is
    for, and it is a workflow decision (where it runs, with what runtime
    available) rather than a coding one.
-3. **No mutation testing.** Nothing verifies that the 701 tests would actually
-   fail if the code were wrong. This is not hypothetical: four separate times
-   during this work a test was green while proving nothing — a mid-download
-   guard that passed for the wrong reason, two helper functions that collapsed
-   distinct stage lists or skipped the path they named, and a set of
-   `context_length` assertions pointed at `loadModel` when the cap is applied in
-   `ensureModel`, so they asserted `undefined` against `undefined`.
-4. **No bundle-size budget.** `npm run analyze` exists but nothing fails on
+3. **No bundle-size budget.** `npm run analyze` exists but nothing fails on
    regression.
-5. **Five latent defects are pinned by tests rather than fixed**, each with a
+4. **Eight latent defects are pinned by tests rather than fixed**, each with a
    `NOTE — latent` comment at the assertion:
    - podcast host gender always resolves to `"male"`, because it is derived with
      `voice.includes("female")` and no real Piper voice id contains that string;
+   - a single-entry voice list collapses both hosts onto one voice
+     (`voices[1] ?? voices[0]`), so Arabic-with-one-voice gives Host B the same
+     voice as Host A;
    - the save button stays enabled while the save dialog is open, so it can be
      clicked twice and open two dialogs;
    - `evaluateQuiz`'s AI path discards the model's per-question `explanation`
@@ -339,7 +348,45 @@ Honest list, highest value first.
      the chunk schema requires ≥2 lines and the bound allows exactly enough
      chunks to reach the target at 2 lines each, so it can never fire;
    - `loadModel` silently omits `context_length` when its caller does not supply
-     one, which is easy to misread as "the cap was applied".
+     one, which is easy to misread as "the cap was applied";
+   - `probeLocalProviders` strips only `/v1/models` or `/api/tags` from the
+     liveness URL, so LM Studio's native origin is advertised as
+     `http://localhost:1234/api`;
+   - **`AIRuntime.discoverAll` can throw despite documenting "Never throws"** —
+     its per-provider catch block calls `provider.capabilities()`, the same call
+     that just threw, so one misbehaving provider takes down discovery for every
+     other provider.
 
    These are recorded, not resolved. Fixing any of them means updating its test
    on purpose, which is the point.
+
+### 6.1 Closed since this document was first written
+
+**Mutation testing.** `scripts/check-mutations.mjs` pins 17 behaviours with
+targeted mutations — each rewrites one line, runs the single focused test file
+that should catch it, and restores the file. A mutation the suite still passes is
+a SURVIVOR, and a survivor is reported as a failure. `npm run check:mutations` is
+blocking in CI; Stage 1 explains why it is opt-in locally.
+
+Its first real run found a survivor, which is the whole point of having it.
+Flipping `every` to `some` in `selectProvider` changed nothing observable,
+because every selection test asked for a single capability and the two predicates
+are identical on a one-element list. Three tests now cover the strict-subset
+case, and each of the three `every` sites has its own mutation.
+
+The harness also arrived broken in two ways, and neither was visible until it was
+actually executed:
+
+1. It invoked Jest through `node_modules/.bin/jest.cmd`. Node 22 refuses to spawn
+   a `.cmd` without a shell, so `spawnSync` returned `status: null` with
+   `EINVAL`. The script read that as "timed out", mutated 14 source files, ran
+   **zero** tests, restored them, and reported that it could not evaluate
+   anything — all in 5 seconds. It now goes through `process.execPath` and the
+   Jest entry point, and a preflight refuses to start when Jest is not runnable.
+2. Its patterns are authored with `\n`, but `LessonContent.tsx` uses CRLF, so
+   that one mutation matched 0× and was reported STALE — the harness had
+   silently stopped testing it. Matching now happens on LF-normalised text with
+   the file's own line endings restored afterwards.
+
+Both are the same lesson this document keeps repeating: a guard that has never
+been run is not a guard, it is a claim.

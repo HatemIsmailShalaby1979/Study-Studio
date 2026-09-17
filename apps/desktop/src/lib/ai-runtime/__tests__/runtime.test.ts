@@ -136,6 +136,41 @@ describe("AIRuntime — provider selection", () => {
     expect(runtime.selectProvider({ requires: ["chat"] })).toBe(canChat);
   });
 
+  // The three tests below exist because of a mutation-testing survivor.
+  //
+  // `every` and `some` are INDISTINGUISHABLE when only one capability is
+  // required — a single-element list makes the two identical. Every test above
+  // asks for `["chat"]` alone, so flipping `every` to `some` in any of
+  // selectProvider's three checks changed nothing observable and survived the
+  // whole suite. The distinction only shows up when a provider satisfies a
+  // strict SUBSET of a multi-capability request, which is what these pin.
+  it("ignores a session provider that satisfies only SOME of the required capabilities", () => {
+    const chatOnly = makeProvider("chat-only", ["chat"]);
+    const chatAndVision = makeProvider("chat-and-vision", ["chat", "vision"]);
+    const runtime = runtimeWith(chatOnly, chatAndVision);
+    runtime.session.setProvider("chat-only");
+
+    expect(runtime.selectProvider({ requires: ["chat", "vision"] })).toBe(chatAndVision);
+  });
+
+  it("ignores a configured default that satisfies only SOME of the required capabilities", () => {
+    const chatOnly = makeProvider("chat-only", ["chat"]);
+    const chatAndVision = makeProvider("chat-and-vision", ["chat", "vision"]);
+    const runtime = new AIRuntime({ config: { defaultProviderId: "chat-only" } });
+    runtime.registerProvider(chatOnly);
+    runtime.registerProvider(chatAndVision);
+
+    expect(runtime.selectProvider({ requires: ["chat", "vision"] })).toBe(chatAndVision);
+  });
+
+  it("skips a partial match when scanning for the first capable provider", () => {
+    const chatOnly = makeProvider("chat-only", ["chat"]);
+    const chatAndVision = makeProvider("chat-and-vision", ["chat", "vision"]);
+    const runtime = runtimeWith(chatOnly, chatAndVision);
+
+    expect(runtime.selectProvider({ requires: ["chat", "vision"] })).toBe(chatAndVision);
+  });
+
   it("ignores a session provider that is no longer registered", () => {
     const runtime = runtimeWith(makeProvider("a"));
     runtime.session.setProvider("gone");
