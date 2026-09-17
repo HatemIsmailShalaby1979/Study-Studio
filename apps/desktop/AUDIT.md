@@ -31,9 +31,9 @@ the JSX against the compiled CSS.
 | Check | Command | Baseline | After fixes |
 | --- | --- | --- | --- |
 | Types | `npx tsc --noEmit` | Pass — 0 errors | **Pass — 0 errors** |
-| Tests | `npx jest --ci` | Pass — 189 passed, 1 skipped, 16 suites | **Pass — 860 passed, 0 skipped, 42 suites** |
+| Tests | `npx jest --ci` | Pass — 189 passed, 1 skipped, 16 suites | **Pass — 880 passed, 0 skipped, 42 suites** |
 | Lint | `npx next lint` | Pass with **33 warnings** | **Pass — 0 warnings, 0 errors** |
-| Coverage | `npx jest --ci --coverage` | 48.65% stmts / 38.88% branch / 37.76% funcs | **83.61% / 72.80% / 76.20%** |
+| Coverage | `npx jest --ci --coverage` | 48.65% stmts / 38.88% branch / 37.76% funcs | **84.07% / 73.06% / 76.85%** |
 | Coverage gate | `jest.config.js` + `check-coverage.mjs` | Set to **25%** — 24 points below reality | **55% global, plus per-directory and per-file floors** |
 | `AIRuntimeProvider` | `--coverage` | 10.52% stmts / **0% branch** | **100% stmts / 87.06% branch** |
 | Build | `npx next build` | Pass | **Pass — 10/10 static pages, `out/` 4 MB → 1.6 MB** |
