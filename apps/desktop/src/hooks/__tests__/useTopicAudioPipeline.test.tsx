@@ -1,12 +1,44 @@
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { useTopicAudioPipeline } from "@/hooks/useTopicAudioPipeline";
+import * as tts from "@/lib/tts";
+import * as tauri from "@/lib/tauri";
 import type { Lesson } from "@/types";
 
 // Plan item 2.4: the audio pipeline hook had 0% coverage. These tests focus on
 // its state-machine wiring and mutual-exclusion guards; provider/Tauri I/O is
 // intentionally not invoked in jsdom.
+//
+// The one exception is the save-re-entrancy test at the bottom. That guard
+// exists to stop a SECOND OS save dialog from opening, and a dialog is only
+// ever requested on the desktop — so the test has to be able to pretend it is
+// on the desktop, and to count picker calls. `isTauri` defaults to false
+// (jsdom's reality, so every other test is unaffected) and the two file-picker
+// calls are faked. Everything else runs for real.
+//
+// The flags are created inside the factories rather than closed over from the
+// module body: `jest.mock` is hoisted above the imports, so a `const` declared
+// down here would still be in its temporal dead zone when the factory runs.
+jest.mock("@/lib/tauri", () => ({
+  ...jest.requireActual("@/lib/tauri"),
+  isTauri: jest.fn(() => false),
+}));
+jest.mock("@/lib/tts", () => ({
+  ...jest.requireActual("@/lib/tts"),
+  pickAudioDestination: jest.fn(),
+  exportAudio: jest.fn(),
+}));
+
+const mockIsTauri = tauri.isTauri as jest.MockedFunction<typeof tauri.isTauri>;
+const mockPickAudioDestination = tts.pickAudioDestination as jest.MockedFunction<
+  typeof tts.pickAudioDestination
+>;
+const mockExportAudio = tts.exportAudio as jest.MockedFunction<typeof tts.exportAudio>;
 
 const lesson = { id: "l1", title: "Water", sections: [] } as unknown as Lesson;
+
+afterEach(() => {
+  mockIsTauri.mockReturnValue(false);
+});
 
 describe("useTopicAudioPipeline", () => {
   it("seeds an existing lesson and audio into the ready state", () => {
@@ -147,5 +179,46 @@ describe("useTopicAudioPipeline", () => {
     await act(async () => {
       await download;
     });
+  });
+
+  it("refuses a second save while one is already in progress", async () => {
+    // Was a real defect. `downloadTrack` guarded only LISTENING, and
+    // `isDownloadDisabled` did not list DOWNLOADING, so with the save dialog
+    // open the button stayed enabled and a second click ran
+    // `promptUserFileSave` again — a second OS dialog. The reducer had already
+    // refused the transition (START_DOWNLOADING only fires from AUDIO_READY),
+    // but the side effect ran before the reducer got a say, so the state
+    // machine's refusal was invisible.
+    //
+    // The assertion that matters is the dialog count, not the stage: one save
+    // must mean one picker call.
+    mockIsTauri.mockReturnValue(true);
+    mockPickAudioDestination.mockResolvedValue("C:/chosen.wav");
+    mockExportAudio.mockResolvedValue(1);
+
+    const { result } = renderHook(() => useTopicAudioPipeline());
+    act(() => result.current.seedAudio({ audiobook: "water.wav" }));
+
+    // Not awaited on purpose: the guard only holds while the stage is
+    // DOWNLOADING, and awaiting would let the picker resolve and return the
+    // machine to AUDIO_READY before the second call is made. The second call
+    // below is therefore made synchronously, inside that window.
+    let first: Promise<void> = Promise.resolve();
+    act(() => {
+      first = result.current.downloadTrack("audiobook");
+    });
+    expect(result.current.state.stage).toBe("DOWNLOADING");
+
+    await act(async () => {
+      await result.current.downloadTrack("audiobook");
+    });
+
+    await waitFor(() => expect(mockPickAudioDestination).toHaveBeenCalledTimes(1));
+
+    // Settle the first save so the test does not leak an update.
+    await act(async () => {
+      await first;
+    });
+    expect(result.current.state.savedLocations.audiobook).toBe("C:/chosen.wav");
   });
 });

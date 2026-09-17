@@ -316,6 +316,13 @@ export function isListenDisabled(stage: PipelineStage): boolean {
 export function isDownloadDisabled(stage: PipelineStage): boolean {
   return (
     stage === "LISTENING" ||
+    // Saving is re-entrant without this. `START_DOWNLOADING` only fires from
+    // AUDIO_READY, so the reducer already refuses a second save — but the
+    // side effect (the OS save dialog) ran before the reducer got a say, so a
+    // second click opened a second dialog. Keeping DOWNLOADING here makes the
+    // predicate the same guard the reducer applies, which is what makes
+    // "mutually exclusive" true in the UI as well as in the state machine.
+    stage === "DOWNLOADING" ||
     stage === "AUDIO_GENERATING" ||
     stage === "IDLE" ||
     stage === "TOPIC_GENERATED" ||

@@ -94,6 +94,15 @@ describe("pipeline UI helpers", () => {
     expect(isDownloadDisabled("LISTENING")).toBe(true);
     expect(isDownloadDisabled("AUDIO_READY")).toBe(false);
   });
+
+  it("blocks saving while a save is already in progress", () => {
+    // Was a real defect: DOWNLOADING blocked listening but not saving, so the
+    // Save button stayed enabled with the dialog open and a second click
+    // reached `promptUserFileSave` — even though the reducer, which only
+    // accepts START_DOWNLOADING from AUDIO_READY, had already refused it.
+    expect(isDownloadDisabled("DOWNLOADING")).toBe(true);
+    expect(isListenDisabled("DOWNLOADING")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

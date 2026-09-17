@@ -3,6 +3,7 @@ import AudioFileDownload from "@/components/AudioFileDownload";
 import * as tts from "@/lib/tts";
 import type { Lesson } from "@/types";
 import type { AudioTrackType, PipelineStage } from "@/lib/topicPipeline";
+import { isDownloadDisabled, isListenDisabled } from "@/lib/topicPipeline";
 
 // Characterisation tests for AudioFileDownload — the audio generate/save panel.
 //
@@ -72,32 +73,18 @@ interface PipelineOverrides {
 }
 
 /**
- * Build the shape the component destructures off `pipeline`. The disabled flags
- * are derived from `stage` exactly as `topicPipeline.ts` derives them.
+ * Build the shape the component destructures off `pipeline`.
  *
- * The two lists are NOT the same, and the difference is the whole point of the
- * mutual-exclusion rule: `DOWNLOADING` blocks listening but not saving, and
- * `LISTENING` blocks saving but not listening. Collapsing them into one list
- * would make the suite assert combinations the reducer never produces.
+ * The disabled flags come from the REAL predicates in `topicPipeline.ts`, not
+ * from local stage lists. They used to be reimplemented here, and that is why
+ * this suite could not see the re-entrant-save defect: the mock's
+ * `downloadDisabledStages` omitted DOWNLOADING, so the component was handed
+ * `isDownloadDisabled: false` for a stage where the real predicate now says
+ * true, and every assertion about the Save button was really asserting on the
+ * mock. Deriving them keeps the suite honest and cannot drift from the source.
  */
 function makePipeline(over: PipelineOverrides = {}) {
   const stage = over.stage ?? "TOPIC_GENERATED";
-  const listenDisabledStages: PipelineStage[] = [
-    "DOWNLOADING",
-    "AUDIO_GENERATING",
-    "IDLE",
-    "TOPIC_GENERATED",
-    "QUIZ_IN_PROGRESS",
-    "QUIZ_COMPLETED",
-  ];
-  const downloadDisabledStages: PipelineStage[] = [
-    "LISTENING",
-    "AUDIO_GENERATING",
-    "IDLE",
-    "TOPIC_GENERATED",
-    "QUIZ_IN_PROGRESS",
-    "QUIZ_COMPLETED",
-  ];
   return {
     state: {
       stage,
@@ -114,8 +101,8 @@ function makePipeline(over: PipelineOverrides = {}) {
     downloadTrack: jest.fn().mockResolvedValue(undefined),
     seedAudio: jest.fn(),
     canGenerateAudio: over.canGenerateAudio ?? stage === "TOPIC_GENERATED" || stage === "AUDIO_READY",
-    isListenDisabled: listenDisabledStages.includes(stage),
-    isDownloadDisabled: downloadDisabledStages.includes(stage),
+    isListenDisabled: isListenDisabled(stage),
+    isDownloadDisabled: isDownloadDisabled(stage),
   };
 }
 
@@ -745,17 +732,12 @@ describe("AudioFileDownload — audio element", () => {
     expect(screen.queryByTestId("audio-element")).not.toBeInTheDocument();
   });
 
-  it("keeps the player mounted while the save dialog is open", async () => {
-    // NOTE — latent gap, pinned as-is.
-    // Playback is paused rather than torn down, so the element stays in the
-    // tree — that part is correct. What is NOT correct is that the save button
-    // is still enabled while the dialog is open: `isDownloadDisabled` lists
-    // LISTENING but not DOWNLOADING, and neither `isGenerating` nor
-    // `isListening` is true in this state. So the label changes to
-    // "Choosing location..." but a second click still reaches `downloadTrack`
-    // and would open a second save dialog. `downloadTrack` does not guard
-    // against re-entry either (it only returns early when LISTENING).
-    // Rewrite this assertion if the button is made to disable properly.
+  it("pauses playback and disables saving while the save dialog is open", async () => {
+    // Was a pinned defect. Playback is paused rather than torn down, so the
+    // player stays mounted — that part was always right. The Save button, by
+    // contrast, stayed enabled because `isDownloadDisabled` listed LISTENING
+    // but not DOWNLOADING, so a second click still reached `downloadTrack` and
+    // opened a second OS dialog. Both halves are asserted here.
     await renderPanel({
       pipeline: makePipeline({
         stage: "DOWNLOADING",
@@ -767,12 +749,13 @@ describe("AudioFileDownload — audio element", () => {
     expect(await screen.findByTestId("audio-element")).toBeInTheDocument();
     const save = screen.getByRole("button", { name: /Choosing location/ });
     expect(save).toBeInTheDocument();
-    expect(save).toBeEnabled();
+    expect(save).toBeDisabled();
   });
 
   it("does not let a second save start while the first is still open", async () => {
-    // Documents the consequence of the gap above, so the day it is fixed this
-    // test fails loudly and has to be updated on purpose.
+    // The consequence of the fix above: the button no longer accepts the click.
+    // The hook-level guard that makes this true even if a click got through is
+    // covered in useTopicAudioPipeline.test.tsx.
     const pipeline = makePipeline({
       stage: "DOWNLOADING",
       tempAudioPaths: { audiobook: "C:/tmp/a.mp3" },
@@ -780,10 +763,10 @@ describe("AudioFileDownload — audio element", () => {
     });
     await renderPanel({ pipeline });
 
-    fireEvent.click(screen.getByRole("button", { name: /Choosing location/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Choosing location/ }));
+    const save = screen.getByRole("button", { name: /Choosing location/ });
+    fireEvent.click(save);
+    fireEvent.click(save);
 
-    await waitFor(() => expect(pipeline.downloadTrack).toHaveBeenCalled());
-    expect(pipeline.downloadTrack.mock.calls.length).toBe(2);
+    expect(pipeline.downloadTrack).not.toHaveBeenCalled();
   });
 });

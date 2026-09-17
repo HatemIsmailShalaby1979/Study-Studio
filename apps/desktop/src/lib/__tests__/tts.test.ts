@@ -51,6 +51,20 @@ describe("voiceGenderFor", () => {
     expect(voiceGenderFor(catalog, "en_US-lessac-medium")).toBe("male");
   });
 
+  it("uses the catalog for an id the name heuristic cannot read", () => {
+    // The assertion that actually distinguishes the two sources. Every seed
+    // voice is named after a person the heuristic recognises — amy, lessac,
+    // kareem — so on the seed catalog alone a pure name heuristic agrees with
+    // the catalog and the suite cannot tell them apart. Mutation testing found
+    // exactly that: replacing the catalog lookup with "never matches" survived.
+    // This id carries no gender word, so only the catalog can answer.
+    const opaque = [uvoice("en_US-alpha-medium", { gender: "female" })];
+    expect(voiceGenderFor(opaque, "en_US-alpha-medium")).toBe("female");
+    // ...and with no catalog entry the heuristic alone says "male", which is
+    // what makes the line above a real assertion rather than a coincidence.
+    expect(voiceGenderFor([], "en_US-alpha-medium")).toBe("male");
+  });
+
   it("falls back to the name heuristic for ids the catalog does not know", () => {
     expect(voiceGenderFor(catalog, "ws:Samantha")).toBe("female");
     expect(voiceGenderFor(catalog, "ws:Daniel")).toBe("male");

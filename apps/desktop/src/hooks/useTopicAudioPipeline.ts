@@ -136,8 +136,14 @@ export function useTopicAudioPipeline() {
   }, []);
 
   const downloadTrack = useCallback(async (track: AudioTrackType, defaultFileName?: string) => {
-    if (state.stage === "LISTENING") {
-      console.warn("Mutual Exclusion Guard: Stop playback before saving to disk.");
+    // The same predicate the Save button uses, and the same one the reducer
+    // applies to START_DOWNLOADING. Guarding here is what actually matters:
+    // `promptUserFileSave` below is a side effect that opens an OS dialog, and
+    // it used to run regardless of whether the reducer accepted the
+    // transition — so a second click during DOWNLOADING opened a second dialog
+    // even though the state machine had silently ignored it.
+    if (isDownloadDisabled(state.stage)) {
+      console.warn("Mutual Exclusion Guard: stop playback or wait for the current save before saving.");
       return;
     }
 

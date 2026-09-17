@@ -226,6 +226,25 @@ const MUTATIONS = [
     replace: "  const known = voices.find(() => false)?.gender;",
     tests: ["src/lib/__tests__/tts.test.ts"],
   },
+  {
+    id: "topicpipeline-download-disabled-omits-downloading",
+    file: "src/lib/topicPipeline.ts",
+    why: "saving is disabled while a save is already in progress",
+    find: '    stage === "DOWNLOADING" ||\n    stage === "AUDIO_GENERATING" ||',
+    replace: '    stage === "AUDIO_GENERATING" ||',
+    tests: [
+      "src/lib/__tests__/topicPipeline.test.ts",
+      "src/components/__tests__/AudioFileDownload.test.tsx",
+    ],
+  },
+  {
+    id: "hook-download-guard-listening-only",
+    file: "src/hooks/useTopicAudioPipeline.ts",
+    why: "the save dialog is not re-opened while one save is already pending",
+    find: "    if (isDownloadDisabled(state.stage)) {",
+    replace: '    if (state.stage === "LISTENING") {',
+    tests: ["src/hooks/__tests__/useTopicAudioPipeline.test.tsx"],
+  },
 ];
 
 // Invoke Jest through the Node binary rather than the `node_modules/.bin` shim.
