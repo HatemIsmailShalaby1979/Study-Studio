@@ -19,6 +19,7 @@ import {
   checkFfmpeg,
   unifiedVoiceCatalog,
   unifiedVoicesForLanguage,
+  voiceGenderFor,
   isTtsAvailable,
   type UnifiedVoice,
 } from "@/lib/tts";
@@ -176,8 +177,8 @@ export default function LessonPage() {
         difficulty: lesson.difficulty || "intermediate",
         language: podcastLang,
         length: lesson.length || "medium",
-        voiceGenderA: currentVoice.includes("female") ? "female" : "male",
-        voiceGenderB: currentVoiceB.includes("female") ? "female" : "male",
+        voiceGenderA: voiceGenderFor(allVoices, currentVoice),
+        voiceGenderB: voiceGenderFor(allVoices, currentVoiceB),
       });
       const updatedLesson = { ...lesson, podcastScript: result.podcastScript };
       setLesson(updatedLesson);

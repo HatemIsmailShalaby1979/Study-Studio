@@ -205,6 +205,27 @@ const MUTATIONS = [
     replace: "    if (tempPath) {",
     tests: ["src/components/__tests__/AudioFileDownload.test.tsx"],
   },
+  {
+    id: "lessoncontent-podcast-gender-from-id",
+    file: "src/app/lesson/LessonContent.tsx",
+    why: "host gender is resolved from the voice catalog, not a substring of the id",
+    find: "        voiceGenderA: voiceGenderFor(allVoices, currentVoice),",
+    replace: '        voiceGenderA: currentVoice.includes("female") ? "female" : "male",',
+    tests: ["src/app/lesson/__tests__/LessonContent.test.tsx"],
+  },
+  {
+    id: "tts-voicegender-ignores-catalog",
+    file: "src/lib/tts.ts",
+    why: "the catalog's gender wins over the name heuristic for known ids",
+    // `find(() => false)` never matches, so the lookup always misses and only
+    // the name heuristic is left. Written this way rather than as
+    // `const known = undefined` so the mutant still type-checks — a mutation
+    // that fails to compile would make Jest fail for the wrong reason and the
+    // harness would score it "caught" without a test ever running.
+    find: "  const known = voices.find((v) => v.id === voiceId)?.gender;",
+    replace: "  const known = voices.find(() => false)?.gender;",
+    tests: ["src/lib/__tests__/tts.test.ts"],
+  },
 ];
 
 // Invoke Jest through the Node binary rather than the `node_modules/.bin` shim.

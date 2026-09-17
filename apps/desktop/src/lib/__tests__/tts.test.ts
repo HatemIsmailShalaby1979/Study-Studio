@@ -1,5 +1,16 @@
-import { buildTtsText, voiceRepoBase, voicesForLanguage } from "@/lib/tts";
+import { buildTtsText, voiceGenderFor, voiceRepoBase, voicesForLanguage } from "@/lib/tts";
+import type { UnifiedVoice } from "@/lib/tts";
 import { Lesson } from "@/types";
+
+const uvoice = (id: string, over: Partial<UnifiedVoice> = {}): UnifiedVoice => ({
+  id,
+  displayName: id,
+  language: "en",
+  gender: "male",
+  source: "piper-seed",
+  available: true,
+  ...over,
+});
 
 describe("voiceRepoBase", () => {
   it("maps voice ids to nested piper repo paths", () => {
@@ -23,6 +34,37 @@ describe("voicesForLanguage", () => {
       "en_US-amy-medium",
       "en_GB-alba-medium",
     ]);
+  });
+});
+
+describe("voiceGenderFor", () => {
+  const catalog: UnifiedVoice[] = [
+    uvoice("en_US-lessac-medium"),
+    uvoice("en_US-amy-medium", { gender: "female" }),
+  ];
+
+  it("reads gender from the catalog rather than the voice id", () => {
+    // The defect this replaced: `id.includes("female")` is false for every real
+    // Piper id, so `en_US-amy-medium` — a female voice — reported "male", and
+    // so did every other voice, making the podcast prompt name two men.
+    expect(voiceGenderFor(catalog, "en_US-amy-medium")).toBe("female");
+    expect(voiceGenderFor(catalog, "en_US-lessac-medium")).toBe("male");
+  });
+
+  it("falls back to the name heuristic for ids the catalog does not know", () => {
+    expect(voiceGenderFor(catalog, "ws:Samantha")).toBe("female");
+    expect(voiceGenderFor(catalog, "ws:Daniel")).toBe("male");
+  });
+
+  it("reports male when neither the catalog nor the name knows", () => {
+    // Preserves the previous default for genuinely unidentifiable voices.
+    expect(voiceGenderFor(catalog, "custom-voice-01")).toBe("male");
+    expect(voiceGenderFor([], "zzz")).toBe("male");
+  });
+
+  it("does not let an 'unknown' catalog entry shadow the name heuristic", () => {
+    const withUnknown = [uvoice("ws:Samantha", { gender: "unknown" })];
+    expect(voiceGenderFor(withUnknown, "ws:Samantha")).toBe("female");
   });
 });
 

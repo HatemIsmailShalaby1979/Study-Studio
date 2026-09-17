@@ -39,15 +39,26 @@ jest.mock("@/lib/api", () => ({
   generatePodcastOnly: jest.fn(),
 }));
 
-jest.mock("@/lib/tts", () => ({
-  listAvailableVoices: jest.fn(),
-  downloadVoice: jest.fn(),
-  checkFfmpeg: jest.fn(),
-  unifiedVoiceCatalog: jest.fn(),
-  unifiedVoicesForLanguage: jest.fn(),
-  isTtsAvailable: jest.fn(),
-  buildTtsText: jest.fn(() => "built tts text"),
-}));
+// Only the I/O surface is faked. The pure helpers deliberately keep their REAL
+// implementations — `voiceGenderFor` above all, because the podcast tests assert
+// on the gender the request carries. A stubbed resolver would make those
+// assertions test the stub: every value would come back `undefined` and
+// `objectContaining` would still match, so the suite would pass while the
+// behaviour was broken. `buildTtsText` is overridden because its real output is
+// irrelevant here and a fixed string makes the pipeline-seeding tests readable.
+jest.mock("@/lib/tts", () => {
+  const actual = jest.requireActual("@/lib/tts");
+  return {
+    ...actual,
+    listAvailableVoices: jest.fn(),
+    downloadVoice: jest.fn(),
+    checkFfmpeg: jest.fn(),
+    unifiedVoiceCatalog: jest.fn(),
+    unifiedVoicesForLanguage: jest.fn(),
+    isTtsAvailable: jest.fn(),
+    buildTtsText: jest.fn(() => "built tts text"),
+  };
+});
 
 const mockPush = jest.fn();
 let searchParams = new URLSearchParams();
@@ -695,17 +706,15 @@ describe("LessonContent — podcast generation", () => {
     );
   });
 
-  // NOTE — latent bug, pinned as-is.
-  // `handleGeneratePodcast` derives host gender with
-  // `voice.includes("female") ? "female" : "male"`. No real Piper voice id
-  // contains the literal substring "female" (they are `en_US-amy-medium`,
-  // `en_US-lessac-medium`, `ar_JO-kareem-medium`, ...), so BOTH hosts always
-  // report "male" in production. The app already has the right primitive —
-  // `tts.inferGender()` plus the `gender` field on `UnifiedVoice` — and
-  // `handlePodcastLangChange` even selects voices BY that field. These tests
-  // record today's behaviour so the split cannot change it silently; they
-  // should be rewritten when the heuristic is fixed to use `UnifiedVoice.gender`.
-  it("reports the default host genders when nothing is changed", async () => {
+  // These four tests used to pin a defect: `handleGeneratePodcast` derived host
+  // gender with `voice.includes("female") ? "female" : "male"`, and no real
+  // Piper voice id contains the literal substring "female" (they are
+  // `en_US-amy-medium`, `en_US-lessac-medium`, `ar_JO-kareem-medium`, ...), so
+  // BOTH hosts always reported "male" in production regardless of the
+  // selection. The request now resolves gender through `voiceGenderFor`, which
+  // reads `UnifiedVoice.gender` — the same field `handlePodcastLangChange`
+  // already used to pick defaults. Rewritten, per the note that was here.
+  it("reports each host's gender from the voice catalog", async () => {
     await renderWith();
     await openTab("podcast");
 
@@ -717,8 +726,8 @@ describe("LessonContent — podcast generation", () => {
 
     await waitFor(() =>
       expect(mockGeneratePodcast).toHaveBeenCalledWith(
-        // Both male: the id-substring heuristic cannot see amy is female.
-        expect.objectContaining({ voiceGenderA: "male", voiceGenderB: "male" })
+        // lessac is the male seed, amy the female one.
+        expect.objectContaining({ voiceGenderA: "male", voiceGenderB: "female" })
       )
     );
   });
@@ -739,27 +748,27 @@ describe("LessonContent — podcast generation", () => {
 
     await waitFor(() =>
       expect(mockGeneratePodcast).toHaveBeenCalledWith(
-        // Still both "male" — see the note above; what this pins is that the
-        // request is built from the LIVE selection, not the defaults.
-        expect.objectContaining({ voiceGenderA: "male", voiceGenderB: "male" })
+        // Genders follow the LIVE selection, so swapping the defaults swaps
+        // them: A is now the female voice and B the male one.
+        expect.objectContaining({ voiceGenderA: "female", voiceGenderB: "male" })
       )
     );
   });
 
-  it("would report female if a voice id contained the word", async () => {
-    // Proves the heuristic is a substring test on the id, not a lookup of the
-    // catalog's own `gender` field. Guards against a "fix" that changes the
-    // condition without updating the documented behaviour.
+  it("trusts the catalog's gender over a misleading voice id", async () => {
+    // The inverse of the old heuristic, and the reason this is a real fix
+    // rather than a renamed substring test: the ids below say nothing about
+    // gender, so only the catalog can supply the answer.
     mockUnifiedVoiceCatalog.mockResolvedValue([
-      voice("en_female-hostA", { displayName: "Host A" }),
-      voice("en_male-hostB", { displayName: "Host B" }),
+      voice("en_US-alpha-medium", { displayName: "Alpha", gender: "female" }),
+      voice("en_US-beta-medium", { displayName: "Beta", gender: "male" }),
     ]);
     mockListAvailableVoices.mockResolvedValue([]);
     await renderWith();
     await openTab("podcast");
 
-    fireEvent.change(selectFor("Host A Voice"), { target: { value: "en_female-hostA" } });
-    fireEvent.change(selectFor("Host B Voice"), { target: { value: "en_male-hostB" } });
+    fireEvent.change(selectFor("Host A Voice"), { target: { value: "en_US-alpha-medium" } });
+    fireEvent.change(selectFor("Host B Voice"), { target: { value: "en_US-beta-medium" } });
     fireEvent.click(screen.getByRole("button", { name: /Generate Podcast/i }));
 
     await waitFor(() =>
@@ -783,16 +792,41 @@ describe("LessonContent — podcast generation", () => {
     );
   });
 
-  it("collapses both hosts onto one voice when the language only has one", async () => {
-    // Characterises a real edge: `voices[1] ?? voices[0]` means a language with
-    // a single catalog entry gives Host B the same voice as Host A, so both
-    // hosts report the same gender. Not a bug to fix here — just pinned, so a
-    // refactor that changes host-b fallback has to do so on purpose.
+  it("switches both hosts to the chosen language's voices, with their genders", async () => {
     mockListAvailableVoices.mockResolvedValue([]);
     await renderWith({ title: "دورة الماء" });
     await openTab("podcast");
 
     fireEvent.click(screen.getByRole("button", { name: /العربية/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Generate Podcast/i }));
+
+    await waitFor(() =>
+      expect(mockGeneratePodcast).toHaveBeenCalledWith(
+        // `voices[0]` then `voices[1]` of the Arabic catalog: kareem, laila.
+        // The Arabic seeds are a man and a woman, so the genders differ — the
+        // old substring heuristic reported "male" for both.
+        expect.objectContaining({ voiceGenderA: "male", voiceGenderB: "female" })
+      )
+    );
+  });
+
+  it("gives both hosts the same voice when the language has only one", async () => {
+    // `voices[1] ?? voices[0]`: a one-voice language cannot supply two voices,
+    // so host B falls back to host A's. The honest consequence is that both
+    // hosts report the SAME gender. This is the case the old, mislabelled test
+    // claimed to cover but never did — its catalog held two Arabic voices.
+    mockUnifiedVoiceCatalog.mockResolvedValue([
+      voice("ar_JO-kareem-medium", { displayName: "Kareem", language: "ar" }),
+    ]);
+    mockListAvailableVoices.mockResolvedValue([]);
+    await renderWith({ title: "دورة الماء" });
+    await openTab("podcast");
+
+    fireEvent.click(screen.getByRole("button", { name: /العربية/ }));
+
+    expect(selectFor("Host A Voice")).toHaveValue("ar_JO-kareem-medium");
+    expect(selectFor("Host B Voice")).toHaveValue("ar_JO-kareem-medium");
+
     fireEvent.click(screen.getByRole("button", { name: /Generate Podcast/i }));
 
     await waitFor(() =>

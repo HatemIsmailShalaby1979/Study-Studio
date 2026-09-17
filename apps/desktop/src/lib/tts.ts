@@ -329,3 +329,27 @@ export function unifiedVoicesForLanguage(voices: UnifiedVoice[], lang: string): 
   const prefix = lang.toLowerCase();
   return voices.filter((v) => v.language.toLowerCase().startsWith(prefix));
 }
+
+/**
+ * The gender to report for a host voice in the podcast prompt.
+ *
+ * The catalog's own `gender` field is authoritative — it is the same field
+ * `handlePodcastLangChange` uses to pick a sensible default per host. The name
+ * heuristic is only a fallback for ids the catalog does not know (an arbitrary
+ * `.onnx` on disk, a voice id that arrived from a saved lesson). A voice that
+ * is unknown by both routes reports "male", which is what the previous
+ * implementation reported for *everything*.
+ *
+ * This replaces a substring test on the voice id (`voice.includes("female")`).
+ * No real Piper id contains the word "female" — they are `en_US-amy-medium`,
+ * `en_US-lessac-medium`, `ar_JO-kareem-medium`, `en_GB-alba-medium` — so both
+ * hosts always reported "male" whichever voices the user picked, and the
+ * prompt consequently named two men and told the model "Genders MUST match
+ * voices" while the chosen voices were a man and a woman.
+ */
+export function voiceGenderFor(voices: UnifiedVoice[], voiceId: string): "male" | "female" {
+  const known = voices.find((v) => v.id === voiceId)?.gender;
+  if (known === "male" || known === "female") return known;
+  const inferred = inferGender(voiceId);
+  return inferred === "unknown" ? "male" : inferred;
+}
