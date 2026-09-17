@@ -103,6 +103,26 @@ async function probeUrl(url: string): Promise<boolean> {
 }
 
 /**
+ * The server's address, for display.
+ *
+ * The message used to strip a `/v1/models` or `/api/tags` suffix with a regex.
+ * That happens to work for a one-segment tail (`http://localhost:11434/api/tags`)
+ * but not for LM Studio's native liveness URL,
+ * `http://localhost:1234/api/v1/models` — removing the tail there leaves
+ * `http://localhost:1234/api`, which is not a URL anything serves, so the UI
+ * advertised a meaningless address. Parsing gives the origin for any path shape.
+ */
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    // A relative or malformed URL is not something this catalog contains, but
+    // the function must not throw: the whole module's contract is "never throw".
+    return url;
+  }
+}
+
+/**
  * Detect local LLM servers by scanning every known local endpoint in parallel.
  * Reports whatever answers — no single provider is assumed. When nothing local
  * is alive, online providers are still listed with `available: false` so the
@@ -122,9 +142,7 @@ export async function probeLocalProviders(): Promise<ProviderProbeResult[]> {
     id: target.id,
     name: target.name,
     available: up,
-    message: up && upUrl
-      ? `Reachable at ${upUrl.replace(/\/v1\/models$|\/api\/tags$/, "")}`
-      : undefined,
+    message: up && upUrl ? `Reachable at ${originOf(upUrl)}` : undefined,
   }));
 
   // Always include the online providers so the UI can prompt for a key when no

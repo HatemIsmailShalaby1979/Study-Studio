@@ -458,6 +458,11 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
    * the server reports it as resident.
    *
    * Idempotent: if the model is already loaded the call returns immediately.
+   *
+   * A context window is always requested — `options.contextLength` when the
+   * caller supplies one, otherwise `preferredContext(modelId)`. Omitting it
+   * would let LM Studio apply its own default (the model's full window), so
+   * every entry point now loads a model with the same memory policy.
    */
   async loadModel(
     modelId: string,
@@ -474,7 +479,17 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
       model: modelId,
       echo_load_config: true,
     };
-    if (options.contextLength !== undefined) body["context_length"] = options.contextLength;
+    // Always send a context length.
+    //
+    // This used to be conditional on the caller passing one, which made the
+    // capping policy reachable only through `ensureModel` — every other caller
+    // got whatever LM Studio defaults to, which is the model's full window. A
+    // direct `AIRuntime.loadModel(id)` could therefore allocate far more memory
+    // than the app budgets, and nothing in the result said which context the
+    // model had actually been loaded with, so it read as though the cap had
+    // been applied. `preferredContext` is the same cap `ensureModel` passes, so
+    // both routes now load a model identically.
+    body["context_length"] = options.contextLength ?? this.preferredContext(modelId);
     if (options.flashAttention !== undefined) body["flash_attention"] = options.flashAttention;
 
     let response: LoadResponse;

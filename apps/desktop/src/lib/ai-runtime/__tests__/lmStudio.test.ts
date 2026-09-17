@@ -378,12 +378,11 @@ describe("LMStudioProvider — getRecommendedModel", () => {
 /**
  * Capture the `context_length` the provider asks for during `ensureModel`.
  *
- * This MUST go through `ensureModel`, not `loadModel`. `loadModel` only sets
- * `context_length` when its CALLER passes one — it does not consult
- * `preferredContext` at all. The capping policy lives in `ensureModel`, which
- * calls `loadModel(resolved, { contextLength: this.preferredContext(resolved) })`.
- * Asserting against `loadModel` therefore always yields `undefined` and proves
- * nothing about the cap.
+ * `ensureModel` is the app's entry point, so it is the route worth asserting on
+ * end to end. `loadModel` now applies the same cap when its caller omits one —
+ * see the `LMStudioProvider — loadModel` tests below — but the capping POLICY
+ * still lives in `preferredContext`, and `ensureModel` is what wires it to the
+ * resolved model id.
  *
  * The listing must also report the model as NOT resident until a load has been
  * POSTed, or `ensureModel` short-circuits and never sends a body to inspect.
@@ -504,9 +503,15 @@ describe("LMStudioProvider — loadModel", () => {
     expect(result.message).toMatch(/not resident yet/i);
   });
 
-  it("omits context_length when the caller does not ask for one", async () => {
-    // Pins the structural point: the cap is applied by ensureModel, not here.
-    // A caller that omits contextLength gets no context_length in the body.
+  it("applies the capped default when the caller does not ask for one", async () => {
+    // Was a pinned defect. `context_length` used to be sent only when the
+    // caller passed one, which made the capping policy reachable only through
+    // `ensureModel`: every other caller silently got LM Studio's own default,
+    // which is the model's FULL window. A direct `AIRuntime.loadModel(id)`
+    // could therefore allocate far more memory than the app budgets, and
+    // nothing in the result said which context had been used — so it read as
+    // though the cap had been applied. This is the path that had no assertion
+    // at all, because the old test asserted the omission.
     let sentBody: Record<string, unknown> | undefined;
     let loadCount = 0;
     mockFetch.mockImplementation(async (input, init) => {
@@ -523,8 +528,64 @@ describe("LMStudioProvider — loadModel", () => {
 
     await provider().loadModel("ibm/granite-4-h-tiny");
 
-    expect(sentBody).toEqual({ model: "ibm/granite-4-h-tiny", echo_load_config: true });
-    expect(sentBody!["context_length"]).toBeUndefined();
+    // nativeModel() reports max_context_length 262144, capped to 32768.
+    expect(sentBody).toEqual({
+      model: "ibm/granite-4-h-tiny",
+      echo_load_config: true,
+      context_length: 32_768,
+    });
+  });
+
+  it("never asks a small model for more context than it reports", async () => {
+    // The other half of the default: the cap is a ceiling, not a target. An
+    // embedding model reporting 2048 must be loaded with 2048.
+    let sentBody: Record<string, unknown> | undefined;
+    let loadCount = 0;
+    mockFetch.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/models/load")) {
+        loadCount += 1;
+        sentBody = JSON.parse(String(init?.body));
+        return jsonResponse({});
+      }
+      return jsonResponse({
+        models: [
+          nativeModel({
+            max_context_length: 2048,
+            loaded_instances: loadCount > 0 ? [{ id: "i" }] : [],
+          }),
+        ],
+      });
+    });
+
+    await provider().loadModel("ibm/granite-4-h-tiny");
+
+    expect(sentBody!["context_length"]).toBe(2048);
+  });
+
+  it("falls back to the default window when the model reports no maximum", async () => {
+    let sentBody: Record<string, unknown> | undefined;
+    let loadCount = 0;
+    mockFetch.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/models/load")) {
+        loadCount += 1;
+        sentBody = JSON.parse(String(init?.body));
+        return jsonResponse({});
+      }
+      return jsonResponse({
+        models: [
+          nativeModel({
+            max_context_length: undefined,
+            loaded_instances: loadCount > 0 ? [{ id: "i" }] : [],
+          }),
+        ],
+      });
+    });
+
+    await provider().loadModel("ibm/granite-4-h-tiny");
+
+    expect(sentBody!["context_length"]).toBe(16_384);
   });
 
   it("passes an explicit context length through when the caller supplies one", async () => {

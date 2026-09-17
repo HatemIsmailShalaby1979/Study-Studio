@@ -100,19 +100,30 @@ describe("probeLocalProviders", () => {
     );
   });
 
-  it("NOTE — leaves a stray /api on the LM Studio native URL", async () => {
-    // Characterises a cosmetic bug. The message strips `/v1/models` or
-    // `/api/tags`, but LM Studio's native liveness URL is
-    // `http://localhost:1234/api/v1/models` — stripping only the `/v1/models`
-    // tail leaves `http://localhost:1234/api`, so the UI advertises a URL with a
-    // meaningless trailing `/api`. The origin is `http://localhost:1234`.
-    // Rewrite this assertion if the stripper is fixed to normalise to an origin.
+  it("reports the LM Studio origin, not a path with a stray /api", async () => {
+    // Was a pinned defect. The message stripped `/v1/models` or `/api/tags`
+    // from the URL, which mangles the native one: taking the tail off
+    // `http://localhost:1234/api/v1/models` leaves `http://localhost:1234/api`,
+    // so the UI advertised an address nothing serves. The message claims to
+    // report where the server is, so it is parsed now rather than sliced.
     onlyUp([LMSTUDIO_NATIVE]);
 
     const results = await probeLocalProviders();
 
     expect(results.find((r) => r.id === "lm-studio")!.message).toBe(
-      "Reachable at http://localhost:1234/api"
+      "Reachable at http://localhost:1234"
+    );
+  });
+
+  it("reports the same origin whichever LM Studio surface answered", async () => {
+    // The OpenAI-compatible fallback has a one-segment tail, so both routes to
+    // the same server must produce the same address.
+    onlyUp([LMSTUDIO_V1]);
+
+    const results = await probeLocalProviders();
+
+    expect(results.find((r) => r.id === "lm-studio")!.message).toBe(
+      "Reachable at http://localhost:1234"
     );
   });
 

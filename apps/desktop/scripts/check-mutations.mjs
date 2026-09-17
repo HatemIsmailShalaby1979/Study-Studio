@@ -192,6 +192,38 @@ const MUTATIONS = [
     tests: ["src/lib/ai-runtime/__tests__/providerProbe.test.ts"],
   },
   {
+    id: "providerprobe-origin-from-suffix-strip",
+    file: "src/lib/ai-runtime/providerProbe.ts",
+    why: "the reachable address is the URL's origin, not a suffix-stripped path",
+    find: "    message: up && upUrl ? `Reachable at ${originOf(upUrl)}` : undefined,",
+    replace:
+      '    message: up && upUrl ? `Reachable at ${upUrl.replace(/\\/v1\\/models$|\\/api\\/tags$/, "")}` : undefined,',
+    tests: ["src/lib/ai-runtime/__tests__/providerProbe.test.ts"],
+  },
+  {
+    id: "validation-chunk-minimum-lines-removed",
+    file: "src/lib/validation.ts",
+    why: "a chunk below two lines is rejected — the invariant the chunk loop is bounded by",
+    // Removing this minimum would not fail any test at the moment the chunk
+    // loop runs; it would make that loop UNBOUNDED, since the loop no longer
+    // has an iteration counter. So the invariant is asserted directly.
+    find: '  lines: z.array(podcastLineSchema).min(2, "Podcast chunk must have at least 2 dialogue lines"),',
+    replace: "  lines: z.array(podcastLineSchema),",
+    tests: [
+      "src/lib/generation/__tests__/podcast.test.ts",
+      "src/lib/__tests__/generation.test.ts",
+    ],
+  },
+  {
+    id: "lmstudio-load-context-only-when-asked",
+    file: "src/lib/ai-runtime/providers/lmStudio.ts",
+    why: "loadModel always requests a capped context, even without an explicit one",
+    find: '    body["context_length"] = options.contextLength ?? this.preferredContext(modelId);',
+    replace:
+      '    if (options.contextLength !== undefined) body["context_length"] = options.contextLength;',
+    tests: ["src/lib/ai-runtime/__tests__/lmStudio.test.ts"],
+  },
+  {
     id: "lessoncontent-podcast-script-guard",
     file: "src/app/lesson/LessonContent.tsx",
     why: "an undefined podcastScript must not overwrite an existing one",

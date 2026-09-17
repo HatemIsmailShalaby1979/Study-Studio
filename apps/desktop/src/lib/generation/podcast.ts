@@ -114,9 +114,22 @@ async function generatePodcastChunked(
   );
 
   const script: { speaker: "Host A" | "Host B"; text: string }[] = [];
-  const maxChunks = Math.ceil(target / 2) + 1;
-  let chunks = 0;
-  while (script.length < target && chunks < maxChunks) {
+  // No iteration counter here, on purpose.
+  //
+  // There used to be one: `while (script.length < target && chunks < maxChunks)`
+  // with `maxChunks = Math.ceil(target / 2) + 1`. It could never be the
+  // condition that ended the loop. `podcastChunkOutputSchema` requires at least
+  // 2 lines per chunk, so every pass appends ≥2 and `script.length` reaches
+  // `target` in at most `ceil(target / 2)` passes — one fewer than the bound
+  // allowed, for every difficulty/length combination. A chunk below the minimum
+  // is rejected by the validator and throws before the bound is consulted, so it
+  // could not rescue the bound either. It was dead code that read like
+  // protection against a model that under-delivers.
+  //
+  // The loop is bounded by that validator instead, which is honest: the real
+  // guarantee lives in `podcastChunkOutputSchema.min(2)`, and the test suite
+  // pins it directly. Relaxing that minimum would need a real bound here.
+  while (script.length < target) {
     const count = Math.min(PODCAST_CHUNK_LINES, target - script.length);
     const chunk = validatePodcastChunk(
       await retrySameModel(modelId, () =>
@@ -132,7 +145,6 @@ async function generatePodcastChunked(
       )
     );
     script.push(...chunk.lines);
-    chunks += 1;
   }
 
   const glossaryQuiz = validateGlossaryQuiz(

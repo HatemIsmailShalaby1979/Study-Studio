@@ -7,6 +7,7 @@ import {
   PODCAST_TITLE_JSON_SCHEMA,
   PODCAST_CHUNK_JSON_SCHEMA,
   GLOSSARY_QUIZ_JSON_SCHEMA,
+  validatePodcastChunk,
 } from "@/lib/validation";
 
 // Characterisation tests for the chunked podcast generator.
@@ -319,25 +320,15 @@ describe("generatePodcastOnly — chunked generation", () => {
     expect(chunkCalls).toHaveLength(10);
   });
 
-  it("terminates on the target count, not on the chunk bound", async () => {
-    // NOTE — the `maxChunks` bound is unreachable dead code.
-    // The loop is `while (script.length < target && chunks < maxChunks)` with
-    // `maxChunks = ceil(target / 2) + 1`. But `podcastChunkOutputSchema`
-    // requires at least 2 lines per chunk, so the smallest possible chunk still
-    // reaches the target in exactly `ceil(target/2)` iterations — one fewer than
-    // the bound allows. The second condition can therefore never be the one that
-    // fires, for any difficulty/length combination:
-    //
-    //   intermediate/medium  target 24, maxChunks 13, needs 12 at 2 lines
-    //   beginner/short       target 12, maxChunks  7, needs  6
-    //   expert/comprehensive target 60, maxChunks 31, needs 30
-    //
-    // A chunk with fewer than 2 lines is rejected by the validator and throws
-    // before the bound is consulted, so it cannot rescue the bound either. This
-    // is a defensive guard that cannot do the job it was written for; it is
-    // harmless, but it should not be mistaken for protection against a
-    // model that under-delivers. Pinned so the arithmetic is not re-derived
-    // by hand next time.
+  it("terminates on the target count without needing an iteration cap", async () => {
+    // This test used to pin the arithmetic of a `maxChunks` bound that could
+    // never fire: the loop was `while (script.length < target && chunks <
+    // maxChunks)` with `maxChunks = ceil(target / 2) + 1`, but
+    // `podcastChunkOutputSchema` requires at least 2 lines per chunk, so the
+    // smallest possible chunk still reaches the target in exactly
+    // `ceil(target/2)` iterations — one fewer than the bound allowed. The
+    // counter is gone; what replaces it is the validator, so the test below
+    // pins the invariant the loop now depends on.
     mockChatForJson.mockImplementation(async (_model, _messages, schema) => {
       if (schema === PODCAST_TITLE_JSON_SCHEMA) return { title: "T" };
       if (schema === PODCAST_CHUNK_JSON_SCHEMA) return { lines: lines(2) };
@@ -354,9 +345,20 @@ describe("generatePodcastOnly — chunked generation", () => {
     const chunkCalls = mockChatForJson.mock.calls.filter(
       (c) => c[2] === PODCAST_CHUNK_JSON_SCHEMA
     );
-    // 24 / 2 = 12 chunks, one short of the 13 the bound would have allowed.
+    // intermediate/medium -> target 24, so 24 / 2 = 12 chunks of the minimum
+    // allowed size, and the loop stops there of its own accord.
     expect(chunkCalls).toHaveLength(12);
     expect(result.podcastScript).toHaveLength(24);
+  });
+
+  it("rejects a chunk below two lines, which is what bounds the loop", () => {
+    // The invariant the loop above now rests on. With no counter left, a chunk
+    // of zero lines would append nothing, `script.length` would never reach
+    // `target`, and the loop would spin forever. `.min(2)` is what rules that
+    // out, so it is asserted here rather than assumed.
+    expect(() => validatePodcastChunk({ lines: [] })).toThrow(/at least 2/i);
+    expect(() => validatePodcastChunk({ lines: lines(1) })).toThrow(/at least 2/i);
+    expect(validatePodcastChunk({ lines: lines(2) }).lines).toHaveLength(2);
   });
 
   it("retries each phase on the same model", async () => {
