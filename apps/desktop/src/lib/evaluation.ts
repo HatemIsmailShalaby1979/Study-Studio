@@ -141,17 +141,54 @@ Respond ONLY with valid JSON:
       evaluation = JSON.parse(repairJson(jsonStr)) as Record<string, unknown>;
     }
 
+    // Rebuild the per-question array from the LOCAL questions, not the model's.
+    //
+    // Two defects lived in the mapping that used to be here. It took its LENGTH
+    // from the model — `(evaluation.perQuestion).map(...)` — so a model that
+    // returned two entries for a six-question quiz produced a two-entry result,
+    // and one that returned eight produced eight, with `questions[6]`
+    // undefined and a fabricated `correctAnswer: 0`. And the model's own
+    // `explanation` was bound to an unused `_eq` parameter and dropped, even
+    // though `EvaluationResult` types it as required — so every per-question
+    // explanation the prompt asked for was thrown away and the UI rendered
+    // `undefined` after an AI evaluation, while the local paths supplied one.
+    //
+    // Correctness is also not the model's to decide. Whether an answer is right
+    // is a fact about `answers[i] === questions[i].correctIndex`, so the score,
+    // the counts, `rating` and `isCorrect` are all computed here instead of
+    // being spread in from the response. The model contributes exactly what
+    // only it can: the prose.
+    const modelPerQuestion = Array.isArray(evaluation["perQuestion"])
+      ? (evaluation["perQuestion"] as Array<Record<string, unknown>>)
+      : [];
+
     return {
-      ...evaluation,
-      perQuestion: (evaluation["perQuestion"] as Array<Record<string, unknown>>).map(
-        (_eq: unknown, i: number) => ({
+      overallScore,
+      totalQuestions: total,
+      correctAnswers: correctCount,
+      rating: ratingFor(overallScore),
+      feedback:
+        typeof evaluation["feedback"] === "string" && evaluation["feedback"].trim()
+          ? evaluation["feedback"]
+          : `You scored ${correctCount} out of ${total} (${overallScore}%).`,
+      perQuestion: questions.map((q, i) => {
+        const userAnswer = answers[i] ?? -1;
+        const modelExplanation = modelPerQuestion[i]?.["explanation"];
+        return {
           questionIndex: i,
-          userAnswer: answers[i] ?? -1,
-          correctAnswer: questions[i]?.correctIndex ?? 0,
-          isCorrect: (answers[i] ?? -1) === questions[i]?.correctIndex,
-        })
-      ),
-    } as EvaluationResult;
+          userAnswer,
+          correctAnswer: q.correctIndex,
+          isCorrect: userAnswer === q.correctIndex,
+          // The model's explanation when it wrote one, otherwise the
+          // explanation authored with the question — never `undefined`, which
+          // is what the old mapping produced for every entry.
+          explanation:
+            typeof modelExplanation === "string" && modelExplanation.trim()
+              ? modelExplanation
+              : q.explanation,
+        };
+      }),
+    };
   } catch (e) {
     const _err = e instanceof Error ? e : new Error(String(e));
     console.warn(`[evaluation] ${modelToUse} failed; using local scoring:`, _err.message);
@@ -159,6 +196,20 @@ Respond ONLY with valid JSON:
 
   // Fallback to non-AI evaluation
   return buildLocalScoring(questions, answers);
+}
+
+/**
+ * The score bands, in one place.
+ *
+ * The prompt embeds the same thresholds, so a rating computed here matches what
+ * the model was asked to produce — but it is computed rather than read out of
+ * the response, because the score it derives from is already known.
+ */
+function ratingFor(score: number): EvaluationResult["rating"] {
+  if (score >= 80) return "excellent";
+  if (score >= 60) return "good";
+  if (score >= 40) return "fair";
+  return "needs_review";
 }
 
 function buildLocalScoring(
@@ -189,7 +240,7 @@ function buildLocalScoring(
     overallScore,
     totalQuestions: total,
     correctAnswers: correctCount,
-    rating: overallScore >= 80 ? "excellent" : overallScore >= 60 ? "good" : overallScore >= 40 ? "fair" : "needs_review",
+    rating: ratingFor(overallScore),
     feedback: `You scored ${correctCount} out of ${total} (${overallScore}%). Review the explanations below for each question to improve your understanding.`,
     perQuestion: perQuestion.map((q) => ({
       questionIndex: q.questionIndex,

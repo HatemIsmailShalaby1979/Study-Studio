@@ -180,7 +180,10 @@ describe("evaluateQuiz — model resolution", () => {
 });
 
 describe("evaluateQuiz — AI evaluation", () => {
-  it("returns the model's score, rating and feedback", async () => {
+  it("returns the model's feedback alongside the computed score", async () => {
+    // The score here happens to equal the model's claim, because AI_REPLY says
+    // 100 and the single answer is right. The test below is the one that proves
+    // which of the two the result actually uses.
     mockRuntime.chat.mockResolvedValue(AI_REPLY);
     const result = await evaluateQuiz(submission());
 
@@ -231,15 +234,40 @@ describe("evaluateQuiz — AI evaluation", () => {
     expect(result.perQuestion[0]!.correctAnswer).toBe(0);
   });
 
-  it("NOTE — drops the model's per-question explanations", async () => {
-    // Characterises a real gap. The prompt explicitly asks the model for a
-    // detailed `explanation` per question, and `EvaluationResult.perQuestion`
-    // types `explanation` as a required string — but the mapping that builds
-    // the returned array never copies it, so it is `undefined` at runtime and
-    // the model's per-question feedback is discarded. The UI reads it, so the
-    // per-question breakdown renders an empty explanation after an AI
-    // evaluation (the local-scoring paths DO supply one).
-    // Rewrite this test if the mapping is fixed to carry `explanation` through.
+  it("ignores the model's own score and counts", async () => {
+    // Correctness is a fact about the answers, not an opinion the model holds,
+    // so the aggregate fields are computed rather than spread in from the
+    // reply. A model claiming 100% on a quiz whose answer was wrong must not
+    // move the score. Only the prose is the model's.
+    const inflated = JSON.stringify({
+      overallScore: 100,
+      totalQuestions: 1,
+      correctAnswers: 1,
+      rating: "excellent",
+      feedback: "Perfect!",
+      perQuestion: [
+        { questionIndex: 0, userAnswer: 0, correctAnswer: 0, isCorrect: true, explanation: "right" },
+      ],
+    });
+    mockRuntime.chat.mockResolvedValue(inflated);
+    mockExtract.mockReturnValue(inflated);
+
+    const result = await evaluateQuiz(submission({ answers: { 0: 1 } }));
+
+    expect(result.overallScore).toBe(0);
+    expect(result.correctAnswers).toBe(0);
+    expect(result.totalQuestions).toBe(1);
+    expect(result.rating).toBe("needs_review");
+    // ...and the model's feedback still comes through.
+    expect(result.feedback).toBe("Perfect!");
+  });
+
+  it("carries the model's per-question explanations through", async () => {
+    // Was a pinned defect. The mapping that rebuilt `perQuestion` bound the
+    // model's entry to an unused parameter and dropped `explanation`, even
+    // though the prompt asks for one and `EvaluationResult` types it as
+    // required — so the breakdown rendered an empty explanation after an AI
+    // evaluation, while every local-scoring path supplied one.
     const result = await evaluateQuiz(submission());
 
     expect(result.perQuestion[0]).toEqual({
@@ -247,14 +275,32 @@ describe("evaluateQuiz — AI evaluation", () => {
       userAnswer: 0,
       correctAnswer: 0,
       isCorrect: true,
+      explanation: "You correctly identified heat as the driver.",
     });
-    expect(result.perQuestion[0]!.explanation).toBeUndefined();
   });
 
-  it("NOTE — truncates to the model's perQuestion length", async () => {
-    // The returned array is built by mapping over the MODEL's perQuestion, not
-    // over the submitted questions. If the model returns fewer entries than
-    // there are questions, the missing ones vanish from the result entirely
+  it("falls back to the authored explanation when the model omits one", async () => {
+    const terse = JSON.stringify({
+      overallScore: 100,
+      totalQuestions: 1,
+      correctAnswers: 1,
+      rating: "excellent",
+      feedback: "Nice.",
+      perQuestion: [{ questionIndex: 0, userAnswer: 0, correctAnswer: 0, isCorrect: true }],
+    });
+    mockRuntime.chat.mockResolvedValue(terse);
+    mockExtract.mockReturnValue(terse);
+
+    const result = await evaluateQuiz(submission());
+
+    // Never `undefined` — the field is typed as a required string and the UI
+    // renders it directly.
+    expect(result.perQuestion[0]!.explanation).toBe("Heat supplies the energy.");
+  });
+
+  it("keeps one entry per submitted question when the model returns fewer", async () => {
+    // Was a pinned defect: the result was built by mapping over the MODEL's
+    // array, so a short reply silently dropped questions from the result
     // instead of falling back to the locally computed values.
     const short = JSON.stringify({
       overallScore: 50,
@@ -276,8 +322,52 @@ describe("evaluateQuiz — AI evaluation", () => {
       })
     );
 
-    expect(result.perQuestion).toHaveLength(1);
+    expect(result.perQuestion).toHaveLength(2);
     expect(result.totalQuestions).toBe(2);
+    expect(result.correctAnswers).toBe(2);
+    // The first carries the model's prose, the second the authored one.
+    expect(result.perQuestion[0]!.explanation).toBe("a");
+    expect(result.perQuestion[1]!.explanation).toBe("Heat supplies the energy.");
+  });
+
+  it("ignores extra entries the model invents", async () => {
+    // The other half of the same defect: a long reply used to produce a result
+    // LONGER than the quiz, with `questions[i]` undefined and a fabricated
+    // `correctAnswer: 0` for every phantom entry.
+    const long = JSON.stringify({
+      overallScore: 100,
+      totalQuestions: 3,
+      correctAnswers: 3,
+      rating: "excellent",
+      feedback: "All good.",
+      perQuestion: [
+        { questionIndex: 0, userAnswer: 1, correctAnswer: 0, isCorrect: false, explanation: "no" },
+        { questionIndex: 1, userAnswer: 0, correctAnswer: 0, isCorrect: true, explanation: "ghost" },
+        { questionIndex: 2, userAnswer: 0, correctAnswer: 0, isCorrect: true, explanation: "ghost" },
+      ],
+    });
+    mockRuntime.chat.mockResolvedValue(long);
+    mockExtract.mockReturnValue(long);
+
+    const result = await evaluateQuiz(submission({ answers: { 0: 1 } }));
+
+    expect(result.perQuestion).toHaveLength(1);
+    expect(result.correctAnswers).toBe(0);
+    expect(result.overallScore).toBe(0);
+  });
+
+  it("survives a reply with no perQuestion array at all", async () => {
+    const noArray = JSON.stringify({ overallScore: 100, feedback: "Good." });
+    mockRuntime.chat.mockResolvedValue(noArray);
+    mockExtract.mockReturnValue(noArray);
+
+    const result = await evaluateQuiz(submission());
+
+    // This used to throw a TypeError, which the catch turned into local
+    // scoring — discarding the model's feedback along with the array.
+    expect(result.perQuestion).toHaveLength(1);
+    expect(result.perQuestion[0]!.explanation).toBe("Heat supplies the energy.");
+    expect(result.feedback).toBe("Good.");
   });
 
   it("repairs malformed JSON before giving up", async () => {

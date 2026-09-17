@@ -113,8 +113,10 @@ const MUTATIONS = [
     id: "evaluation-excellent-threshold",
     file: "src/lib/evaluation.ts",
     why: "the excellent rating boundary is 80, not 81",
-    find: 'rating: overallScore >= 80 ? "excellent" : overallScore >= 60 ? "good" : overallScore >= 40 ? "fair" : "needs_review",\n    feedback: `You scored',
-    replace: 'rating: overallScore >= 81 ? "excellent" : overallScore >= 60 ? "good" : overallScore >= 40 ? "fair" : "needs_review",\n    feedback: `You scored',
+    // Retargeted: the score bands now live in `ratingFor`, which both the AI
+    // path and the local scorer call, so this mutation guards both at once.
+    find: '  if (score >= 80) return "excellent";',
+    replace: '  if (score >= 81) return "excellent";',
     tests: ["src/lib/__tests__/evaluation.test.ts"],
   },
   {
@@ -227,11 +229,25 @@ const MUTATIONS = [
     tests: ["src/lib/__tests__/tts.test.ts"],
   },
   {
-    id: "topicpipeline-download-disabled-omits-downloading",
+    id: "topicpipeline-listen-disabled-omits-downloading",
     file: "src/lib/topicPipeline.ts",
-    why: "saving is disabled while a save is already in progress",
+    why: "saving and listening are both blocked while a save is in progress",
+    // Unique now that `isDownloadDisabled` derives from `isListenDisabled`
+    // instead of repeating the list: this pair appears once, in the latter.
     find: '    stage === "DOWNLOADING" ||\n    stage === "AUDIO_GENERATING" ||',
     replace: '    stage === "AUDIO_GENERATING" ||',
+    tests: [
+      "src/lib/__tests__/topicPipeline.test.ts",
+      "src/hooks/__tests__/useTopicAudioPipeline.test.tsx",
+      "src/components/__tests__/AudioFileDownload.test.tsx",
+    ],
+  },
+  {
+    id: "topicpipeline-download-disabled-omits-listening",
+    file: "src/lib/topicPipeline.ts",
+    why: "saving is blocked while audio is playing",
+    find: '  return stage === "LISTENING" || isListenDisabled(stage);',
+    replace: "  return isListenDisabled(stage);",
     tests: [
       "src/lib/__tests__/topicPipeline.test.ts",
       "src/components/__tests__/AudioFileDownload.test.tsx",
@@ -244,6 +260,30 @@ const MUTATIONS = [
     find: "    if (isDownloadDisabled(state.stage)) {",
     replace: '    if (state.stage === "LISTENING") {',
     tests: ["src/hooks/__tests__/useTopicAudioPipeline.test.tsx"],
+  },
+  {
+    id: "evaluation-drops-model-explanation",
+    file: "src/lib/evaluation.ts",
+    why: "the model's per-question explanation is carried into the result",
+    find: "          explanation:\n            typeof modelExplanation === \"string\" && modelExplanation.trim()\n              ? modelExplanation\n              : q.explanation,",
+    replace: "          explanation: q.explanation,",
+    tests: ["src/lib/__tests__/evaluation.test.ts"],
+  },
+  {
+    id: "evaluation-perquestion-length-from-model",
+    file: "src/lib/evaluation.ts",
+    why: "the result has one entry per submitted question, not per model entry",
+    find: "      perQuestion: questions.map((q, i) => {",
+    replace: "      perQuestion: questions.slice(0, modelPerQuestion.length).map((q, i) => {",
+    tests: ["src/lib/__tests__/evaluation.test.ts"],
+  },
+  {
+    id: "evaluation-score-from-model",
+    file: "src/lib/evaluation.ts",
+    why: "the score is computed from the answers, not read out of the reply",
+    find: "      overallScore,\n      totalQuestions: total,",
+    replace: '      overallScore: evaluation["overallScore"] as number,\n      totalQuestions: total,',
+    tests: ["src/lib/__tests__/evaluation.test.ts"],
   },
 ];
 

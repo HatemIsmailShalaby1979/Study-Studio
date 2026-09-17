@@ -313,22 +313,22 @@ export function isListenDisabled(stage: PipelineStage): boolean {
   );
 }
 
+/**
+ * Whether the save action is unavailable.
+ *
+ * Expressed as "listening is blocked, or audio is playing" rather than as its
+ * own seven-item list. That is not just shorter: the hand-written list omitted
+ * DOWNLOADING, and that omission is exactly what made saving re-entrant — with
+ * the save dialog already open the button stayed enabled, a second click ran
+ * `promptUserFileSave` again, and a second OS dialog opened. Deriving one list
+ * from the other means the two can no longer drift apart.
+ *
+ * DOWNLOADING has to be covered here even though the reducer already refuses a
+ * second `START_DOWNLOADING` (it only fires from AUDIO_READY): the side effect
+ * runs before the reducer gets a say, so its refusal was invisible.
+ */
 export function isDownloadDisabled(stage: PipelineStage): boolean {
-  return (
-    stage === "LISTENING" ||
-    // Saving is re-entrant without this. `START_DOWNLOADING` only fires from
-    // AUDIO_READY, so the reducer already refuses a second save — but the
-    // side effect (the OS save dialog) ran before the reducer got a say, so a
-    // second click opened a second dialog. Keeping DOWNLOADING here makes the
-    // predicate the same guard the reducer applies, which is what makes
-    // "mutually exclusive" true in the UI as well as in the state machine.
-    stage === "DOWNLOADING" ||
-    stage === "AUDIO_GENERATING" ||
-    stage === "IDLE" ||
-    stage === "TOPIC_GENERATED" ||
-    stage === "QUIZ_IN_PROGRESS" ||
-    stage === "QUIZ_COMPLETED"
-  );
+  return stage === "LISTENING" || isListenDisabled(stage);
 }
 
 export function canGenerateAudio(stage: PipelineStage): boolean {
