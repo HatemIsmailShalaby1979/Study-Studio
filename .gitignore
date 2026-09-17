@@ -10,8 +10,30 @@ Thumbs.db
 .env.*.local
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/releases/
-*.mp3
 *.mp4
 *.zip
 .vscode/
 .idea/
+
+# NOTE on *.mp3 — deliberately NOT blanket-ignored any more.
+#
+# It used to be, and that caused a real bug: apps/desktop/public/featured-podcast.json
+# is tracked and referenced `audioFile: "Study_Studio_Podcast.mp3"`, but the audio
+# itself was ignored — so the featured podcast shipped a dangling reference and
+# played no audio on any fresh clone. A tracked file must never point at an ignored
+# one. Ignore media per-directory instead, so the coupling stays visible.
+
+# Local demo media. Kept on disk (so a developer who has it keeps it) but not
+# committed and not shipped: everything under public/ is copied into out/ and into
+# the installer, and this file alone was ~65% of that payload.
+apps/desktop/assets/
+
+# Local agent/tooling state. Not part of the product, never meant to be committed.
+.claude/
+.workbuddy-ai/
+
+# A separate project that happens to sit inside this working tree. It has its own
+# .git/, .github/ and CLAUDE.md, and 74k+ files. Ignored rather than tracked so it
+# cannot be swept into a commit or destroyed by `git clean -fdx` surprises.
+# Decide its long-term home separately: sibling repo, or submodule.
+deepseek-harness/
