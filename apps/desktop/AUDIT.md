@@ -39,8 +39,9 @@ the JSX against the compiled CSS.
 | Build | `npx next build` | Pass | **Pass — 10/10 static pages, `out/` 4 MB → 1.6 MB** |
 | Compiled CSS | `node scripts/check-tokens.mjs` | **7 utility classes emit 0 rules** | **Exit 0 — 20 utilities resolved** |
 | Version drift | — | 4 manifests, no guard | **`check:versions` — all 4 at 0.2.0** |
-| Live runtime | `LMSTUDIO_LIVE=1 npx jest …lmStudio.live` | *did not exist* | **Pass — 8/8 against a real server, incl. the load cycle** |
-| Mutation testing | `npm run check:mutations` | *did not exist* | **Pass — 17/17 mutations caught; blocking in CI** |
+| Live runtime | `LMSTUDIO_LIVE=1 npx jest …lmStudio.live` | *did not exist* | **Pass — 8/8 by default; 11/11 with `LMSTUDIO_LIVE_MODEL` set, which adds the real load/unload cycle** |
+| Mutation testing | `npm run check:mutations` | *did not exist* | **Pass — 28/28 mutations caught; blocking in CI** |
+| Latent defects | `grep -rn "NOTE — latent" src/` | **8 pinned by tests, 0 fixed** | **0 remaining — 7 fixed, 1 reclassified as a limitation** |
 | **Tauri release build** | `npm run tauri:build` | *never run — Rust was assumed absent* | **Exit 0 — release profile in 6m 30s; NSIS + MSI installers produced; app launches and stays up** |
 
 > **Correction (2026-09-17): the "Rust is not installed" claim in this audit was wrong.**

@@ -332,37 +332,33 @@ Honest list, highest value first.
    available) rather than a coding one.
 3. **No bundle-size budget.** `npm run analyze` exists but nothing fails on
    regression.
-4. **Eight latent defects are pinned by tests rather than fixed**, each with a
-   `NOTE — latent` comment at the assertion:
-   - podcast host gender always resolves to `"male"`, because it is derived with
-     `voice.includes("female")` and no real Piper voice id contains that string;
-   - a single-entry voice list collapses both hosts onto one voice
-     (`voices[1] ?? voices[0]`), so Arabic-with-one-voice gives Host B the same
-     voice as Host A;
-   - the save button stays enabled while the save dialog is open, so it can be
-     clicked twice and open two dialogs;
-   - `evaluateQuiz`'s AI path discards the model's per-question `explanation`
-     even though `EvaluationResult` types it as required, and truncates the
-     result to the model's array length;
-   - `generatePodcastChunked`'s `maxChunks` bound is **unreachable dead code** —
-     the chunk schema requires ≥2 lines and the bound allows exactly enough
-     chunks to reach the target at 2 lines each, so it can never fire;
-   - `loadModel` silently omits `context_length` when its caller does not supply
-     one, which is easy to misread as "the cap was applied";
-   - `probeLocalProviders` strips only `/v1/models` or `/api/tags` from the
-     liveness URL, so LM Studio's native origin is advertised as
-     `http://localhost:1234/api`;
-   - **`AIRuntime.discoverAll` can throw despite documenting "Never throws"** —
-     its per-provider catch block calls `provider.capabilities()`, the same call
-     that just threw, so one misbehaving provider takes down discovery for every
-     other provider.
-
-   These are recorded, not resolved. Fixing any of them means updating its test
-   on purpose, which is the point.
+4. **No latent defect is left pinned-but-unfixed.** The eight that were listed
+   here are all closed — seven fixed, one reclassified as a limitation rather
+   than a defect. See §6.1. The open items above are integration and tooling
+   gaps, not known-wrong behaviour.
 
 ### 6.1 Closed since this document was first written
 
-**Mutation testing.** `scripts/check-mutations.mjs` pins 17 behaviours with
+**The eight pinned defects.** All eight are closed. Each fix rewrote the
+assertion that pinned it — which was the documented intent — and added a mutation
+so the regression cannot return silently.
+
+| Defect | Resolution |
+| --- | --- |
+| `AIRuntime.discoverAll` could throw despite documenting "Never throws": its per-provider catch block called `provider.capabilities()`, the same call that had just thrown, so one misbehaving provider took down discovery for all the others | Fixed. `safeCapabilities()` degrades to `noCapabilities()` and is used **only** in the catch, so a broken provider reports `available: false` while the healthy ones still report normally. |
+| Podcast host gender always resolved to `"male"`, because it came from `voice.includes("female")` and no real Piper id contains that string | Fixed. `voiceGenderFor()` reads `UnifiedVoice.gender`, falls back to the name heuristic for ids the catalog does not know, then to `"male"`. |
+| The save button stayed enabled while the save dialog was open, so it could be clicked twice | Fixed. `isDownloadDisabled` now derives from `isListenDisabled` and covers `DOWNLOADING`, and `downloadTrack` guards on that same predicate — the one the reducer was already applying. |
+| `evaluateQuiz`'s AI path discarded the model's per-question `explanation` and truncated the result to the model's array length | Fixed. The array is built from the local questions, one entry per question, and the score and counts are computed rather than read out of the reply. |
+| `generatePodcastChunked`'s `maxChunks` bound was unreachable dead code | Removed. The loop is bounded by `podcastChunkOutputSchema.min(2)` instead, and a test asserts that invariant directly — because with the counter gone, relaxing the minimum would make the loop unbounded. |
+| `loadModel` silently omitted `context_length` when the caller supplied none | Fixed. It always sends `options.contextLength ?? preferredContext(modelId)`, the same value `ensureModel` passes. |
+| `probeLocalProviders` advertised LM Studio's native origin as `http://localhost:1234/api` | Fixed. The origin is parsed rather than suffix-stripped, for any path shape. |
+| A single-entry voice list collapses both hosts onto one voice (`voices[1] ?? voices[0]`) | **Reclassified, not fixed.** A language with one voice cannot supply two, so the collapse is inherent — it was mis-listed here as a defect. What did change is that the shared gender is now reported honestly instead of both hosts claiming `"male"`. |
+
+The last row is worth stating plainly: it was a limitation described as a defect,
+and leaving it in the list made the list look like it contained work that did not
+exist.
+
+**Mutation testing.** `scripts/check-mutations.mjs` pins 28 behaviours with
 targeted mutations — each rewrites one line, runs the single focused test file
 that should catch it, and restores the file. A mutation the suite still passes is
 a SURVIVOR, and a survivor is reported as a failure. `npm run check:mutations` is
