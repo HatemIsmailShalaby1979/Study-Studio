@@ -4,7 +4,7 @@
 // (routing, selection, session, health, config, structured-output repair)
 // lives here; providers only execute capabilities.
 
-import { supportedCapabilities, supports } from "./capabilities";
+import { noCapabilities, supportedCapabilities, supports } from "./capabilities";
 import { createConfig, type AIRuntimeConfig } from "./config";
 import { HealthMonitor } from "./healthMonitor";
 import { ModelRegistry } from "./modelRegistry";
@@ -20,6 +20,7 @@ import type {
   AIModelLoadResult,
   AIModelProfile,
   AIProvider,
+  AIProviderCapabilities,
   AIProviderSelectionCriteria,
   AIProviderStatus,
 } from "./types";
@@ -69,6 +70,23 @@ export class AIRuntime {
   // ─── Discovery ─────────────────────────────────────────────────────────
 
   /**
+   * Capabilities, or an empty report — never throws.
+   *
+   * This exists because the per-provider catch in `discoverAll` used to call
+   * `provider.capabilities()` directly. That is one of the calls that can throw
+   * in the first place, so a provider whose `capabilities()` threw escaped its
+   * own handler and rejected `discoverAll()` for EVERY provider — the exact
+   * outcome the per-provider catch was written to prevent.
+   */
+  private safeCapabilities(provider: AIProvider): AIProviderCapabilities {
+    try {
+      return provider.capabilities();
+    } catch {
+      return noCapabilities();
+    }
+  }
+
+  /**
    * Full discovery across every registered provider: health + models +
    * recommended model + capability report. Never throws — unavailable
    * providers are reported with `available: false`.
@@ -98,13 +116,17 @@ export class AIRuntime {
           capabilities: provider.capabilities(),
           message: health.message,
         });
-      } catch {
+      } catch (e) {
+        // Everything in this block must be incapable of throwing for the same
+        // reason the try block just did, or the catch is decorative.
+        // `capabilities()` is exactly such a call, hence `safeCapabilities`.
         statuses.push({
           providerId: provider.descriptor.id,
           available: false,
           models: [],
           recommendedModel: "",
-          capabilities: provider.capabilities(),
+          capabilities: this.safeCapabilities(provider),
+          message: e instanceof Error ? e.message : "Discovery failed",
         });
       }
     }

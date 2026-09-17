@@ -1,5 +1,5 @@
 import { AIRuntime } from "@/lib/ai-runtime/runtime";
-import { capabilitiesFrom } from "@/lib/ai-runtime/capabilities";
+import { capabilitiesFrom, noCapabilities } from "@/lib/ai-runtime/capabilities";
 import type { AICapability, AIProvider } from "@/lib/ai-runtime/types";
 
 // Characterisation tests for the AI Runtime — the orchestration layer.
@@ -280,24 +280,42 @@ describe("AIRuntime — discovery", () => {
     expect(status!.models).toEqual([]);
   });
 
-  it("NOTE — lets a throwing capabilities() escape, despite the never-throws contract", async () => {
-    // Characterises a real defect. `discoverAll` documents "Never throws —
-    // unavailable providers are reported with `available: false`", and it has a
-    // catch block per provider to enforce that. But the catch block itself calls
-    // `provider.capabilities()` — the same call that just threw — so the
-    // exception escapes and `discoverAll()` rejects.
+  it("reports a provider as unavailable when its capabilities() throws", async () => {
+    // This was a real defect, fixed rather than pinned. `discoverAll` documents
+    // "Never throws — unavailable providers are reported with `available:
+    // false`" and has a catch block per provider to enforce it — but the catch
+    // block itself called `provider.capabilities()`, the same call that just
+    // threw, so the exception escaped and `discoverAll()` rejected. One
+    // misbehaving provider took down discovery for every other provider, which
+    // is the opposite of what a per-provider catch is for.
     //
-    // The practical consequence: one misbehaving provider takes down discovery
-    // for every other provider, which is exactly what the per-provider catch was
-    // written to prevent. Fixing it means defaulting `capabilities` to
-    // `noCapabilities()` inside the catch; rewrite this assertion when that
-    // happens.
+    // The fix is `safeCapabilities`, which degrades to `noCapabilities()`.
     const p = makeProvider("a");
     (p.capabilities as jest.Mock).mockImplementation(() => {
       throw new Error("capability explosion");
     });
 
-    await expect(runtimeWith(p).discoverAll()).rejects.toThrow(/capability explosion/);
+    const [status] = await runtimeWith(p).discoverAll();
+
+    expect(status!.available).toBe(false);
+    expect(status!.capabilities).toEqual(noCapabilities());
+    expect(status!.message).toMatch(/capability explosion/);
+  });
+
+  it("keeps reporting the healthy providers when another throws in capabilities()", async () => {
+    // The consequence that actually mattered. Discovery is a per-provider
+    // concern, so one broken provider must not remove the others from the list.
+    const broken = makeProvider("broken");
+    (broken.capabilities as jest.Mock).mockImplementation(() => {
+      throw new Error("capability explosion");
+    });
+    const healthy = makeProvider("healthy", ["chat"]);
+
+    const statuses = await runtimeWith(broken, healthy).discoverAll();
+
+    expect(statuses.map((s) => s.providerId)).toEqual(["broken", "healthy"]);
+    expect(statuses[0]!.available).toBe(false);
+    expect(statuses[1]!.available).toBe(true);
   });
 
   it("reports a provider as unavailable when only its health check throws", async () => {
