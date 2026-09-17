@@ -31,15 +31,27 @@ the JSX against the compiled CSS.
 | Check | Command | Baseline | After fixes |
 | --- | --- | --- | --- |
 | Types | `npx tsc --noEmit` | Pass — 0 errors | **Pass — 0 errors** |
-| Tests | `npx jest --ci` | Pass — 189 passed, 1 skipped, 16 suites | **Pass — 450 passed, 0 skipped, 33 suites** |
+| Tests | `npx jest --ci` | Pass — 189 passed, 1 skipped, 16 suites | **Pass — 860 passed, 0 skipped, 42 suites** |
 | Lint | `npx next lint` | Pass with **33 warnings** | **Pass — 0 warnings, 0 errors** |
-| Coverage | `npx jest --ci --coverage` | 48.65% stmts / 38.88% branch / 37.76% funcs | **66.83% / 49.87% / 59.22%** |
-| Coverage gate | `jest.config.js` + `check-coverage.mjs` | Set to **25%** — 24 points below reality | **55% global, plus per-directory floors** |
+| Coverage | `npx jest --ci --coverage` | 48.65% stmts / 38.88% branch / 37.76% funcs | **83.61% / 72.80% / 76.20%** |
+| Coverage gate | `jest.config.js` + `check-coverage.mjs` | Set to **25%** — 24 points below reality | **55% global, plus per-directory and per-file floors** |
 | `AIRuntimeProvider` | `--coverage` | 10.52% stmts / **0% branch** | **100% stmts / 87.06% branch** |
 | Build | `npx next build` | Pass | **Pass — 10/10 static pages, `out/` 4 MB → 1.6 MB** |
 | Compiled CSS | `node scripts/check-tokens.mjs` | **7 utility classes emit 0 rules** | **Exit 0 — 20 utilities resolved** |
 | Version drift | — | 4 manifests, no guard | **`check:versions` — all 4 at 0.2.0** |
 | Live runtime | `LMSTUDIO_LIVE=1 npx jest …lmStudio.live` | *did not exist* | **Pass — 8/8 against a real server, incl. the load cycle** |
+| Mutation testing | `npm run check:mutations` | *did not exist* | **Pass — 17/17 mutations caught; blocking in CI** |
+| **Tauri release build** | `npm run tauri:build` | *never run — Rust was assumed absent* | **Exit 0 — release profile in 6m 30s; NSIS + MSI installers produced; app launches and stays up** |
+
+> **Correction (2026-09-17): the "Rust is not installed" claim in this audit was wrong.**
+> It was inferred from `command -v cargo`. `cargo` is genuinely off PATH — `~/.cargo/bin`
+> does not exist — but the toolchains *are* installed under `~/.rustup` (1.96.0, the version
+> `src-tauri/rust-toolchain.toml` pins, plus stable), alongside VS 2022 with MSVC 14.44.35207,
+> Windows SDK 10.0.26100.0 and WebView2 153.0.4234.32. `npm run tauri:build` therefore
+> succeeds and produces both installers. Every statement below that the Rust side "cannot be
+> compiled or verified here" is superseded by this row. The only real obstacle was that
+> `vcvars64.bat` needs `cmd.exe`, which is blocked in this sandbox, so `INCLUDE`/`LIB`/`PATH`
+> have to be assembled by hand from the discovered paths.
 
 > Note on the lint number: the original 33-warning count was itself misleading.
 > The config used the **base** `no-unused-vars` rule, which is not TypeScript-aware
@@ -57,7 +69,7 @@ Implemented and verified in this pass:
 | ID | Defect | Status |
 | --- | --- | --- |
 | P0-1 | 60+ token utilities compile to nothing | **Fixed** — 5 tokens added to `tailwind.config.ts`; 3 `.badge-*` classes added to `globals.css`; regression guard `scripts/check-tokens.mjs` wired to `npm run check:tokens` |
-| P0-2 | App cannot run on LM Studio (Rust backend Ollama-only, `/v1` profile blind to unloaded models) | **Fixed (frontend)** — native `LMStudioProvider` with `loadModel`/`unloadModel`/`isModelLoaded`; auto-load on init and on model selection. **Rust command still open** (see Phase 3) |
+| P0-2 | App cannot run on LM Studio (Rust backend Ollama-only, `/v1` profile blind to unloaded models) | **Fixed (frontend)** — native `LMStudioProvider` with `loadModel`/`unloadModel`/`isModelLoaded`; auto-load on init and on model selection. **Rust command still unwritten, but no longer blocked** — the shell builds and runs (§0), so `start_lm_studio_if_needed` (3.8) is ordinary remaining work rather than something that cannot be attempted |
 | P1-2 | `AIRuntimeProvider` 10.5% covered with a dead branch | **Fixed** — dead branch removed; logic extracted to `ai-runtime/routing.ts`; component now at **100% stmts / 87% branch** with 22 tests |
 | P1-3 | Zero-coverage modules (`friendlyErrors`, `modelProfiler`, `voiceDiscovery`, `journeys`, …) | **Fixed** — `friendlyErrors` (21 tests), `modelProfiler` (17), `journeys` (23), `voiceDiscovery` (23) and `routing` (33) are covered, `hooks/` is off 0% (plan item 2.4), and every `src/` directory now has an enforced floor. No directory is reported as untracked by `check:coverage`. |
 | P1-5 | `ollama.ts` bypasses the CORS-free transport | **Fixed** — both call sites now use `runtimeFetch` |
@@ -115,8 +127,9 @@ therefore reduces what a compromised *dependency* could reach from the webview �
 but narrower than it looks. The capability file still allows `http://localhost:*` and is
 where the remaining exposure lives. It was left alone deliberately: no UI exposes a
 custom base URL today, but `providerStore` persists one, so tightening it would break a
-hand-configured port — and it cannot be verified here without a Rust toolchain to build
-and run the shell.
+hand-configured port. That verification was deferred on the belief that no Rust toolchain
+was available here — it is available (§0), so tightening the capability file is now a
+testable change rather than a blind one.
 
 **5.5 implementation note — no silent engine switching.** IndexedDB is the primary
 library store. If IndexedDB is unavailable, the versioned localStorage fallback is used
@@ -199,9 +212,9 @@ cycle. It is hermetic without the env var, so CI is unaffected. Verified result:
 ```
 
 **Still open:** `start_lm_studio_if_needed` on the Rust side. `lms.exe` **is** present
-(`~/.lmstudio/bin/lms.exe`) and exposes `lms server start|stop|status`, but **Rust is
-not installed in this environment** (`cargo`/`rustc` absent), so the command could not
-be written and compiled with any confidence. Spec: mirror `start_ollama_if_needed` —
+(`~/.lmstudio/bin/lms.exe`) and exposes `lms server start|stop|status`, but the command was not written because **Rust was believed absent here** — that belief
+was wrong (§0), since the shell builds and runs. This is now ordinary remaining work
+rather than something that could not be attempted. Spec: mirror `start_ollama_if_needed` —
 probe `:1234` first, shell out to `lms server start`, poll `/api/v1/models` until it
 answers, and surface a message naming the LM Studio Developer tab as the manual
 fallback. Note that `lms server status` reported "not running" while `:1234` was
