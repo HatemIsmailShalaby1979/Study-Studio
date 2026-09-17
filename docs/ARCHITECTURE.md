@@ -177,4 +177,15 @@ deferred by decision so they are not forgotten:
 | App | Severity | Packages | Remediation |
 | --- | --- | --- | --- |
 | Desktop | 6 high / 1 moderate | `next@14` chain via `glob` / `brace-expansion` / `postcss`; `uuid` | Upgrade Next.js to v15 (major), then re-run `npm audit` |
-| Mobile | 10 moderate | Expo toolchain (`expo`, `@expo/*`, `xcode`, `uuid`) | Upgrade Expo SDK in a dedicated pass |
+| Mobile | — | Removed. The Expo scaffold was deleted (see [`../apps/desktop/AUDIT.md`](../apps/desktop/AUDIT.md) 5.3), so its 10 moderate findings left the tree with it | n/a |
+
+## Related documents
+
+| Document | Status | What it covers |
+| --- | --- | --- |
+| [`AI_RUNTIME.md`](AI_RUNTIME.md) | **Current** | The provider contract, capability model, and how the runtime selects a provider. The authoritative reference for anything provider-related. |
+| [`../apps/desktop/AUDIT.md`](../apps/desktop/AUDIT.md) | **Current** | Codebase audit with a phased fix plan, measured baseline, and a fix-status table. Supersedes the architecture audit below. |
+| [`../apps/desktop/DESIGN.md`](../apps/desktop/DESIGN.md) | **Current** | Design system: tokens, typography, components, and known deviations. |
+| [`ARCHITECTURE_AUDIT.md`](ARCHITECTURE_AUDIT.md) | **Historical** | The 2026-08-06 runtime-agnostic transformation audit. Its recommendations were implemented; kept as a record of why the AI Runtime layer exists. |
+| [`HELIX_CONSTITUTION.md`](HELIX_CONSTITUTION.md) | Governing | The project constitution. |
+

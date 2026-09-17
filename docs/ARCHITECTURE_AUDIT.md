@@ -1,6 +1,21 @@
 # Study Studio — Architecture Audit
 ## Runtime-Agnostic AI Platform Transformation
 
+> **📜 HISTORICAL DOCUMENT — do not act on it as if it were current.**
+>
+> This is the 2026-08-06 audit that motivated the provider-agnostic AI Runtime.
+> **Its recommendations were implemented** (see the follow-up note below), so
+> treating its findings as open would send you to fix things that are already
+> fixed.
+>
+> For the current state, use:
+> - [`AI_RUNTIME.md`](AI_RUNTIME.md) — the provider contract and capability model
+> - [`../apps/desktop/AUDIT.md`](../apps/desktop/AUDIT.md) — the current audit and fix plan
+>
+> It is kept because the *reasoning* still matters: it explains why the runtime
+> layer exists and what it was designed to avoid. That context is not reproducible
+> from the code alone.
+
 **Date:** 2026-08-06  
 **Author:** Helix Engineering Team  
 **Status:** Audit Complete — Recommendations Implemented (see follow-up below)
