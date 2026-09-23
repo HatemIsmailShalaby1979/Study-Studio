@@ -14,6 +14,8 @@
 //
 //   LMSTUDIO_LIVE=1 LMSTUDIO_LIVE_MODEL=qwen/qwen3.5-9b
 //
+//   OLLAMA_LIVE=1 OLLAMA_LIVE_MODEL=granite4.2:latest
+//
 // Why this file exists: the unit suites mock the HTTP layer, so they prove the
 // request the app *builds* and the response it *parses*, but never that a real
 // model answers a real request. That gap is exactly where the reported defect
@@ -28,8 +30,14 @@
 // that as malformed JSON and retried the same model three more times before
 // reporting a formatting problem that did not exist.
 //
-// Without the env var it asserts the gate and exits, so CI stays hermetic and
-// lint-clean (no disabled tests, no assertion-free tests).
+// The same defect reproduced on `granite4.2:latest` (hybrid thinking): fixed by
+// mapping `reasoningEffort: "none"` to Ollama's top-level `think: false`. This
+// suite runs against either server so the full `generatePodcastOnly` path —
+// title + every chunk + glossary/quiz — is proven against the model that
+// actually failed in production.
+//
+// Without either env var it asserts the gate and exits, so CI stays hermetic
+// and lint-clean (no disabled tests, no assertion-free tests).
 
 import { aiRuntime } from "@/lib/ai-runtime";
 import { chatForJson } from "@/lib/generation/transport";
@@ -37,14 +45,19 @@ import { generateLesson, generatePodcastOnly } from "@/lib/generation";
 import { podcastChunkSystemPrompt, podcastChunkUserPrompt } from "@/lib/generation/prompts";
 import { PODCAST_CHUNK_JSON_SCHEMA, PODCAST_TITLE_JSON_SCHEMA, validatePodcastChunk } from "@/lib/validation";
 
-const RUN = process.env["LMSTUDIO_LIVE"] === "1";
-const MODEL = process.env["LMSTUDIO_LIVE_MODEL"] ?? "";
-const PROVIDER = "lm-studio";
+const RUN_LLAMA = process.env["LMSTUDIO_LIVE"] === "1";
+const RUN_OLLAMA = process.env["OLLAMA_LIVE"] === "1";
+const RUN = RUN_LLAMA || RUN_OLLAMA;
+const MODEL = RUN_OLLAMA
+  ? process.env["OLLAMA_LIVE_MODEL"] ?? "granite4.2:latest"
+  : process.env["LMSTUDIO_LIVE_MODEL"] ?? "";
+const PROVIDER = RUN_OLLAMA ? "ollama" : "lm-studio";
 
 describe("generation — live local model", () => {
   if (!RUN) {
-    test("is opt-in via LMSTUDIO_LIVE=1", () => {
+    test("is opt-in via LMSTUDIO_LIVE=1 or OLLAMA_LIVE=1", () => {
       expect(process.env["LMSTUDIO_LIVE"]).not.toBe("1");
+      expect(process.env["OLLAMA_LIVE"]).not.toBe("1");
     });
     return;
   }
@@ -58,7 +71,7 @@ describe("generation — live local model", () => {
   beforeAll(async () => {
     // Mirror what `initializeRuntime` does, and for the same reason: without a
     // session provider the runtime falls back to the first *registered*
-    // provider, which is Ollama — a server that is not running on this machine.
+    // provider — wrong target when more than one server is up.
     aiRuntime.session.setProvider(PROVIDER);
     await aiRuntime.ensureModelLoaded(MODEL, PROVIDER);
   });
