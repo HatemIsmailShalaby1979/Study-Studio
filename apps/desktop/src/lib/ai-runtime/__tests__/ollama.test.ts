@@ -334,6 +334,54 @@ describe("OllamaProvider — option mapping", () => {
       undefined
     );
   });
+
+  // Reasoning budget: Ollama models that advertise `thinking` spend tokens from
+  // the same `num_predict` budget on reasoning first. A 512-token title request
+  // then comes back with empty `content`, which the structured-output path
+  // reports as "Unexpected end of JSON input". The runtime's answer is
+  // `reasoningEffort: "none"`; Ollama's answer is the TOP-LEVEL `think: false`
+  // field (not an option inside `options`). Without this mapping the podcast
+  // defect was unreachable from the Ollama path.
+  it("maps reasoningEffort: none onto Ollama's top-level think: false", async () => {
+    await new OllamaProvider().chat([{ role: "user", content: "hi" }], {
+      reasoningEffort: "none",
+    });
+
+    expect(mockTransport.chat).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ think: false }),
+      undefined,
+      undefined
+    );
+  });
+
+  it("does not set think when reasoningEffort is not none", async () => {
+    await new OllamaProvider().chat([{ role: "user", content: "hi" }], {
+      reasoningEffort: "low",
+    });
+
+    const options = mockTransport.chat.mock.calls[0]![1];
+    expect(options).not.toHaveProperty("think");
+  });
+
+  it("does not set think when reasoningEffort is omitted", async () => {
+    await new OllamaProvider().chat([{ role: "user", content: "hi" }], { maxTokens: 10 });
+
+    const options = mockTransport.chat.mock.calls[0]![1];
+    expect(options).not.toHaveProperty("think");
+  });
+
+  it("maps reasoningEffort: none for generate too", async () => {
+    await new OllamaProvider().generate("prompt", "system", { reasoningEffort: "none" }, "m");
+
+    expect(mockTransport.generate).toHaveBeenCalledWith(
+      "prompt",
+      "system",
+      expect.objectContaining({ think: false }),
+      "m",
+      undefined
+    );
+  });
 });
 
 describe("OllamaProvider — model profile (browser mode)", () => {

@@ -23,6 +23,10 @@ pub struct OllamaGenerateRequest {
     /// Ollama structured-output JSON Schema (top-level `format` field).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<serde_json::Value>,
+    /// Ollama top-level `think` field. `Some(false)` disables hybrid thinking
+    /// so `num_predict` is spent on the answer, not on reasoning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub think: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -53,6 +57,9 @@ pub struct OllamaOptions {
 pub struct OllamaGenerateResponse {
     pub model: String,
     pub response: String,
+    /// Hybrid-thinking models return reasoning here, separate from `response`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
     pub done: bool,
 }
 
@@ -60,6 +67,9 @@ pub struct OllamaGenerateResponse {
 pub struct OllamaChatMessage {
     pub role: String,
     pub content: String,
+    /// Hybrid-thinking models return reasoning here, separate from `content`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -71,6 +81,9 @@ pub struct OllamaChatRequest {
     /// Ollama structured-output JSON Schema (top-level `format` field).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<serde_json::Value>,
+    /// Ollama top-level `think` field. `Some(false)` disables hybrid thinking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub think: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -78,6 +91,29 @@ pub struct OllamaChatResponse {
     pub model: String,
     pub message: OllamaChatMessage,
     pub done: bool,
+}
+
+/// When the answer is empty but thinking evidence is present, the model spent
+/// its whole `num_predict` budget reasoning. Returning the empty string would
+/// surface as "Unexpected end of JSON input" (malformed JSON); this message
+/// matches `classifyGenerationError` / `describeGenerationFailure`, which
+/// already recognise reasoning starvation and refuse to retry it.
+fn answer_or_starved(content: String, thinking: Option<String>) -> Result<String, String> {
+    if !content.trim().is_empty() {
+        return Ok(content);
+    }
+    let has_thinking = thinking
+        .as_deref()
+        .map(|t| !t.trim().is_empty())
+        .unwrap_or(false);
+    if has_thinking {
+        return Err(
+            "the model spent its entire token budget on internal reasoning and produced no answer. \
+             This model's runtime does not let the app turn its reasoning off"
+                .to_string(),
+        );
+    }
+    Ok(content)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -392,6 +428,7 @@ async fn generate(
     num_gpu: Option<i32>,
     keep_alive: Option<String>,
     format: Option<serde_json::Value>,
+    think: Option<bool>,
 ) -> Result<String, String> {
     // Get model string and immediately drop the guard
     let model = {
@@ -410,6 +447,7 @@ async fn generate(
         system: system_prompt,
         stream: false,
         format,
+        think,
         options: Some(OllamaOptions {
             temperature,
             top_p: top_p.or(Some(0.9)),
@@ -435,7 +473,7 @@ async fn generate(
     }
 
     let result: OllamaGenerateResponse = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(result.response)
+    answer_or_starved(result.response, result.thinking)
 }
 
 #[tauri::command]
@@ -449,6 +487,7 @@ async fn chat(
     num_gpu: Option<i32>,
     keep_alive: Option<String>,
     format: Option<serde_json::Value>,
+    think: Option<bool>,
 ) -> Result<String, String> {
     // Get model string and immediately drop the guard
     let model = {
@@ -466,6 +505,7 @@ async fn chat(
         messages,
         stream: false,
         format,
+        think,
         options: Some(OllamaOptions {
             temperature,
             top_p: top_p.or(Some(0.9)),
@@ -491,7 +531,7 @@ async fn chat(
     }
 
     let result: OllamaChatResponse = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(result.message.content)
+    answer_or_starved(result.message.content, result.message.thinking)
 }
 
 #[tauri::command]

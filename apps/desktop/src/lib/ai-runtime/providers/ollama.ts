@@ -54,6 +54,12 @@ const FALLBACK_CONTEXT_WINDOW = 8192;
 /**
  * Map runtime options onto Ollama's option names. `maxTokens`/`max_tokens`
  * collapse to `num_predict` (Ollama's real token-cap option).
+ *
+ * `reasoningEffort: "none"` becomes the TOP-LEVEL `think: false` field —
+ * Ollama does not understand `reasoning_effort`, and without this mapping a
+ * hybrid thinking model (e.g. `granite4.2:latest`) spends the whole
+ * `num_predict` budget on reasoning and returns empty `content`, which the
+ * structured-output path reports as "Unexpected end of JSON input".
  */
 function toOllamaOptions(options?: AICompletionOptions): OllamaGenerateOptions {
   if (!options) return {};
@@ -66,6 +72,7 @@ function toOllamaOptions(options?: AICompletionOptions): OllamaGenerateOptions {
     num_gpu: options.numGpu,
     keep_alive: options.keepAlive,
     format: options.format,
+    ...(options.reasoningEffort === "none" ? { think: false as const } : {}),
   };
 }
 

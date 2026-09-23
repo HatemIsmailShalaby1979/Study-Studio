@@ -374,6 +374,102 @@ describe("generate format option", () => {
 });
 
 // ---------------------------------------------------------------------------
+// think option — hybrid thinking models burn num_predict on reasoning first
+// ---------------------------------------------------------------------------
+describe("think option", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("sends think: false as a TOP-LEVEL field on /api/chat", async () => {
+    mockFetchJson({
+      model: "granite4.2:latest",
+      message: { role: "assistant", content: '{"title":"x"}', thinking: "" },
+      done: true,
+      done_reason: "stop",
+    });
+
+    await chat([{ role: "user", content: "title" }], { think: false, num_predict: 512 }, "granite4.2:latest");
+
+    expect(lastRequest!.body.think).toBe(false);
+    // think is NOT nested inside options
+    expect((lastRequest!.body.options as Record<string, unknown>)?.think).toBeUndefined();
+  });
+
+  it("omits think when not provided", async () => {
+    mockFetchJson({ model: "m", message: { role: "assistant", content: "{}" }, done: true });
+
+    await chat([{ role: "user", content: "x" }], {}, "m");
+
+    expect(lastRequest!.body.think).toBeUndefined();
+  });
+
+  it("sends think as a top-level field on /api/generate too", async () => {
+    mockFetchJson({ model: "m", response: "{}", done: true });
+
+    await generate("p", undefined, { think: false }, "m");
+
+    expect(lastRequest!.body.think).toBe(false);
+    expect((lastRequest!.body.options as Record<string, unknown>)?.think).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reasoning starvation — empty answer + thinking evidence must NOT parse as JSON
+// ---------------------------------------------------------------------------
+describe("reasoning starvation detection", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("throws ReasoningBudgetExhaustedError when chat content is empty but thinking is full", async () => {
+    mockFetchJson({
+      model: "granite4.2:latest",
+      message: {
+        role: "assistant",
+        content: "",
+        thinking: "The user wants a title. I shall think for a long time...",
+      },
+      done: true,
+      done_reason: "length",
+    });
+
+    await expect(
+      chat([{ role: "user", content: "title" }], { num_predict: 512 }, "granite4.2:latest")
+    ).rejects.toThrow(/spent its entire token budget on internal reasoning/);
+  });
+
+  it("throws ReasoningBudgetExhaustedError when generate response is empty but thinking is full", async () => {
+    mockFetchJson({
+      model: "m",
+      response: "",
+      thinking: "pondering...",
+      done: true,
+      done_reason: "length",
+    });
+
+    await expect(
+      generate("p", undefined, { num_predict: 512 }, "m")
+    ).rejects.toThrow(/spent its entire token budget on internal reasoning/);
+  });
+
+  it("returns content normally when thinking is present alongside a real answer", async () => {
+    mockFetchJson({
+      model: "m",
+      message: { role: "assistant", content: '{"title":"ok"}', thinking: "brief thought" },
+      done: true,
+      done_reason: "stop",
+    });
+
+    await expect(
+      chat([{ role: "user", content: "x" }], { num_predict: 512 }, "m")
+    ).resolves.toBe('{"title":"ok"}');
+  });
+
+  it("returns empty content as-is when there is no thinking evidence", async () => {
+    mockFetchJson({ model: "m", message: { role: "assistant", content: "" }, done: true });
+
+    await expect(chat([{ role: "user", content: "x" }], {}, "m")).resolves.toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // one-model-per-provider — /api/ps + keep_alive:0 release
 // ---------------------------------------------------------------------------
 describe("listResidentModels / releaseOtherModels", () => {

@@ -1,5 +1,6 @@
 import { isTauri, invokeTauri } from "./tauri";
 import { runtimeFetch } from "./ai-runtime/transport";
+import { ReasoningBudgetExhaustedError } from "./ai-runtime/providers/openaiCompatible";
 import { log } from "./logger";
 
 export const OLLAMA_URL = process.env["OLLAMA_URL"] || "http://localhost:11434";
@@ -42,18 +43,31 @@ export interface OllamaGenerateOptions {
    * `./validation`.
    */
   format?: unknown;
+  /**
+   * Disable hybrid thinking for models that advertise the `thinking`
+   * capability (Ollama's top-level `think` field). A thinking model spends
+   * `num_predict` tokens on reasoning first; at the app's 512-token title
+   * budget that leaves an empty `content`, which `JSON.parse` reports as
+   * "Unexpected end of JSON input". Measured on `granite4.2:latest`: without
+   * `think: false` the title request burns 512/512 on thinking; with it the
+   * same request returns valid JSON in 29 tokens.
+   */
+  think?: boolean;
 }
 
 export interface OllamaChatResponse {
   model: string;
-  message: { role: string; content: string };
+  message: { role: string; content: string; thinking?: string };
   done: boolean;
+  done_reason?: string;
 }
 
 export interface OllamaGenerateResponse {
   model: string;
   response: string;
+  thinking?: string;
   done: boolean;
+  done_reason?: string;
 }
 
 export interface OllamaModelInfo {
@@ -126,6 +140,32 @@ function buildOllamaOptions(opts: OllamaGenerateOptions): Record<string, unknown
 function resolveNumPredict(opts: OllamaGenerateOptions): number {
   return opts.num_predict ?? opts.max_tokens ?? DEFAULT_NUM_PREDICT;
 }
+
+/**
+ * Return the model's answer, or report reasoning starvation when the answer is
+ * empty and thinking evidence is present.
+ *
+ * Ollama returns thinking in a separate field (`message.thinking` / top-level
+ * `thinking`). A hybrid model that exhausts `num_predict` on thinking yields
+ * empty `content` and a full `thinking` — handing `""` to the caller makes
+ * `JSON.parse` fail with "Unexpected end of JSON input", which is then
+ * described as malformed JSON. That is a formatting lie; the real failure is
+ * budget starvation, and it must surface as that (see
+ * `ReasoningBudgetExhaustedError` / `describeGenerationFailure`).
+ *
+ * Empty content with NO thinking evidence is left alone: different failure,
+ * different cause.
+ */
+function answerFrom(
+  content: string,
+  thinking: string | undefined,
+  options?: OllamaGenerateOptions
+): string {
+  if (content.trim().length > 0) return content;
+  if (!thinking || thinking.trim().length === 0) return content;
+  throw new ReasoningBudgetExhaustedError(undefined, resolveNumPredict(options ?? {}));
+}
+
 export async function chat(
   messages: OllamaChatMessage[],
   options: OllamaGenerateOptions = {},
@@ -143,6 +183,7 @@ export async function chat(
       numGpu: options.num_gpu,
       keepAlive: options.keep_alive ?? "10m",
       format: options.format,
+      think: options.think,
     });
   }
 
@@ -156,8 +197,9 @@ export async function chat(
     options: buildOllamaOptions(options),
   };
   if (options.format !== undefined) body["format"] = options.format;
+  if (options.think !== undefined) body["think"] = options.think;
   const result = await ollamaFetch<OllamaChatResponse>("/api/chat", body, signal);
-  return result.message.content;
+  return answerFrom(result.message.content, result.message.thinking, options);
 }
 
 export async function generate(
@@ -179,6 +221,7 @@ export async function generate(
       numGpu: options.num_gpu,
       keepAlive: options.keep_alive ?? "10m",
       format: options.format,
+      think: options.think,
     });
   }
 
@@ -193,8 +236,9 @@ export async function generate(
     options: buildOllamaOptions(options),
   };
   if (options.format !== undefined) body["format"] = options.format;
+  if (options.think !== undefined) body["think"] = options.think;
   const result = await ollamaFetch<OllamaGenerateResponse>("/api/generate", body, signal);
-  return result.response;
+  return answerFrom(result.response, result.thinking, options);
 }
 
 export async function listModels(forceRefresh = false): Promise<OllamaModelInfo[]> {
