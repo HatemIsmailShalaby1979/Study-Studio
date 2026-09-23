@@ -1,5 +1,5 @@
 import { getLessonSystemPrompt, podcastChunkSystemPrompt } from "@/lib/generation";
-import { bindDefaultSkills, bindSkills, skillInjector } from "@/lib/skills";
+import { allTaskSkillSet, bindDefaultSkills, bindSkills, skillInjector } from "@/lib/skills";
 
 // Plan item 4.13: "generating a lesson injects education + open-lesson +
 // humanizer; generating a podcast injects podcast-ops + humanizer. Verified by
@@ -144,5 +144,40 @@ describe("no binding", () => {
       podcastChunkSystemPrompt("intermediate", "en", "male", "female")
     );
     expect(ids).toContain("podcast-ops");
+  });
+});
+
+describe("mid-size local models (7b-12b)", () => {
+  it("binds every task pack so lesson and podcast both start ready", () => {
+    bindDefaultSkills({ model: "gemma3:12b", providerId: "ollama" });
+
+    const lesson = activeSkillsIn(getLessonSystemPrompt("intermediate"));
+    const podcast = activeSkillsIn(
+      podcastChunkSystemPrompt("intermediate", "en", "male", "female")
+    );
+
+    for (const skill of allTaskSkillSet()) {
+      expect(lesson).toContain(skill.id);
+    }
+    // The session set is already the full union — intent resolution still
+    // works, but a mid-size model never starts a podcast from the lean set.
+    expect(lesson).toContain("podcast-ops");
+    expect(lesson).toContain("notebooklm-studio");
+    expect(podcast).toContain("podcast-ops");
+    expect(podcast).toContain("humanizer");
+  });
+
+  it("keeps the lean lesson set for small local models", () => {
+    bindDefaultSkills({ model: "llama3.2:3b", providerId: "ollama" });
+    const ids = activeSkillsIn(getLessonSystemPrompt("intermediate"));
+    const all = allTaskSkillSet().map((s) => s.id);
+
+    expect(ids).toContain("education");
+    expect(ids).toContain("humanizer");
+    // Podcast/audio packs are task-intent only for non-mid-size models.
+    expect(ids).not.toContain("podcast-ops");
+    expect(ids).not.toContain("podcast");
+    expect(ids).not.toContain("storytelling");
+    expect(ids.length).toBeLessThan(all.length);
   });
 });

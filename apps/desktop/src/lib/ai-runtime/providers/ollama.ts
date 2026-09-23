@@ -143,7 +143,11 @@ export class OllamaProvider implements AIProvider {
   }
 
   async ensureModel(preferredModel?: string): Promise<string> {
-    return transport.ensureModel(preferredModel);
+    const resolved = await transport.ensureModel(preferredModel);
+    // One model per provider: unload every other resident model so a 7B-12B
+    // selection is not sharing the GPU with whatever was loaded before.
+    await transport.releaseOtherModels(resolved).catch(() => undefined);
+    return resolved;
   }
 
   async getModelProfile(modelId: string): Promise<AIModelProfile | null> {

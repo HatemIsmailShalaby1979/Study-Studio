@@ -56,7 +56,7 @@ const PROVIDER_NAMES: Record<string, string> = {
 function GenerateContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { initialized, initializing, available, canGenerate, models, recommendedModel, message, refresh, activeProviderId, providerStatuses, ttsAvailable, setActiveProvider, refreshProviders, loadedModel, didLoadModel, modelLoadMessage, activeSkills } = useAIRuntime();
+  const { initialized, initializing, available, canGenerate, models, recommendedModel, message, refresh, activeProviderId, providerStatuses, ttsAvailable, setActiveProvider, setActiveModel, loadedModel, didLoadModel, modelLoadMessage, activeSkills } = useAIRuntime();
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
@@ -132,12 +132,16 @@ function GenerateContent() {
 
   // Sync models from the app-level AI runtime context into local state. When
   // the active provider changes (e.g. Ollama → OpenRouter), reset a stale model
-  // selection that no longer exists in the new provider's list.
+  // selection that no longer exists in the new provider's list. Prefer the
+  // session pin so navigating away and back (or a re-scan) keeps the model the
+  // user chose.
   useEffect(() => {
     if (initialized) {
+      const pinned = aiRuntime.session.getModel();
+      const pinKnown = pinned !== null && models.some((m) => m.id === pinned);
       const known = models.some((m) => m.id === selectedModel);
-      if (canGenerate && models.length > 0 && !known) {
-        setSelectedModel(recommendedModel || models[0]!.id);
+      if (canGenerate && models.length > 0 && (!known || (selectedModel === "" && pinKnown))) {
+        setSelectedModel(pinKnown ? pinned! : recommendedModel || models[0]!.id);
       } else if (!canGenerate && message) {
         setError("I couldn't find a local model or API key. Start Ollama/LM Studio or enter an API key to continue.");
       }
@@ -167,29 +171,24 @@ function GenerateContent() {
       setProfilerWarning("");
       setLoadingModel(false);
       if (!modelId) {
+        aiRuntime.session.setModel(null);
         setProfilingModel(false);
         return;
       }
 
-      // Bind the chosen model to the skill set so the session's injections stay
-      // consistent with what is actually going to run.
-      bindDefaultSkills({ model: modelId, providerId: activeProviderId, intent: "lesson" });
-
-      // Load-on-demand. On a runtime that separates downloaded from loaded
-      // (LM Studio) the user's selection is loaded here, so picking a model in
-      // this dropdown is all that is required — no pre-loading in LM Studio.
-      if (aiRuntime.supportsModelLoading(activeProviderId || undefined)) {
-        setLoadingModel(true);
-        try {
-          await aiRuntime.ensureModelLoaded(modelId, activeProviderId || undefined);
-          await refreshProviders();
-        } catch (e) {
-          setProfilerWarning(
-            e instanceof Error ? e.message : "Could not load this model into memory."
-          );
-        } finally {
-          setLoadingModel(false);
-        }
+      // Pin first so every subsequent ensureModel/generation uses this model
+      // across navigation, then rebind skills and load when supported.
+      setLoadingModel(true);
+      try {
+        await setActiveModel(modelId);
+      } catch (e) {
+        // Pin stays even if the load fails — the user selected this model and
+        // generation will surface the real server-side error.
+        setProfilerWarning(
+          e instanceof Error ? e.message : "Could not load this model into memory."
+        );
+      } finally {
+        setLoadingModel(false);
       }
 
       setProfilingModel(true);
@@ -204,7 +203,7 @@ function GenerateContent() {
         setProfilingModel(false);
       }
     },
-    [activeProviderId, refreshProviders]
+    [setActiveModel]
   );
 
   /**

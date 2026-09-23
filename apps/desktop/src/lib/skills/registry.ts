@@ -16,6 +16,7 @@ import { notebooklmStudioSkill } from "./definitions/notebooklmStudio";
 import { openLessonSkill } from "./definitions/openLesson";
 import { podcastOpsSkill } from "./definitions/podcastOps";
 import type { SkillConfig, SkillIntent } from "./types";
+import { LOCAL_PROVIDER_IDS } from "../ai-runtime/providerIds";
 
 /**
  * Every registered skill. Order here is not injection order — that comes from
@@ -179,4 +180,43 @@ export function skillsForIntent(
  */
 export function defaultSkillSet(): SkillConfig[] {
   return skillsForIntent("lesson");
+}
+
+/**
+ * Union of every task intent's skill set — lesson, podcast, audio, quiz,
+ * research, and rewrite — in injection order.
+ *
+ * Mid-size local models (7B-12B) bind this instead of the lesson-only set so
+ * a single session default covers every task the Generate page can request
+ * without rebinding when the user switches task type.
+ */
+export function allTaskSkillSet(): SkillConfig[] {
+  const intents: SkillIntent[] = [
+    "lesson",
+    "podcast",
+    "audio",
+    "quiz",
+    "research",
+    "rewrite",
+  ];
+  const ids = new Set<string>();
+  for (const intent of intents) {
+    for (const skill of skillsForIntent(intent)) ids.add(skill.id);
+  }
+  return ALL_SKILLS.filter((s) => ids.has(s.id)).sort(
+    (a, b) => a.priority - b.priority || a.id.localeCompare(b.id)
+  );
+}
+
+/**
+ * True for mid-size local models (7B, 8B, 9B, 12B) that should carry every
+ * task pack. Online / unknown providers keep the lean lesson set — hosted
+ * models are not memory-bound the same way and the lesson-only set keeps
+ * their prompts smaller.
+ */
+export function isMidSizeLocalModel(modelId: string, providerId?: string): boolean {
+  const id = (modelId || "").toLowerCase();
+  if (!/(^|[^0-9])(7b|8b|9b|12b)([^0-9]|$)/.test(id)) return false;
+  if (!providerId || providerId === "auto") return true;
+  return (LOCAL_PROVIDER_IDS as readonly string[]).includes(providerId);
 }

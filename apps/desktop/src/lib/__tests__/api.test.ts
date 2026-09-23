@@ -18,7 +18,12 @@ jest.mock("@/lib/ai-runtime", () => ({
     supportsModelLoading: jest.fn(),
     chat: jest.fn(),
     discoverAll: jest.fn(),
-    session: { setProvider: jest.fn() },
+    session: {
+      setProvider: jest.fn(),
+      getProvider: jest.fn(() => null),
+      setModel: jest.fn(),
+      getModel: jest.fn(() => null),
+    },
     providers: { all: () => [] },
   },
   extractJsonFromResponse: (raw: string) => raw,

@@ -307,7 +307,28 @@ export class AIRuntime {
     if (!provider) {
       throw new Error(`No AI provider registered with id "${id}"`);
     }
-    const resolved = await provider.ensureModel(preferredModel);
+
+    // Explicit selection re-pins. An implicit resolve keeps the session pin
+    // when this provider can still serve it, so a background ensureModel call
+    // cannot silently replace the user's choice with the recommendation.
+    if (preferredModel) {
+      const resolved = await provider.ensureModel(preferredModel);
+      this.session.setModel(resolved);
+      return resolved;
+    }
+
+    const pin = this.session.getModel();
+    if (pin) {
+      try {
+        const resolved = await provider.ensureModel(pin);
+        this.session.setModel(resolved);
+        return resolved;
+      } catch {
+        // Pin no longer installed — fall through to the recommendation.
+      }
+    }
+
+    const resolved = await provider.ensureModel(undefined);
     this.session.setModel(resolved);
     return resolved;
   }
@@ -398,8 +419,23 @@ export class AIRuntime {
     if (!provider) throw new Error(`No AI provider registered with id "${id}"`);
 
     // Providers that implement load-on-demand (LM Studio) do the work inside
-    // ensureModel, so a single call both resolves and loads.
-    const model = await provider.ensureModel(preferredModel);
+    // ensureModel, so a single call both resolves and loads. Same pin policy
+    // as ensureModel: explicit preferred re-pins; bare calls keep the pin.
+    let model: string;
+    if (preferredModel) {
+      model = await provider.ensureModel(preferredModel);
+    } else {
+      const pin = this.session.getModel();
+      if (pin) {
+        try {
+          model = await provider.ensureModel(pin);
+        } catch {
+          model = await provider.ensureModel(undefined);
+        }
+      } else {
+        model = await provider.ensureModel(undefined);
+      }
+    }
     this.session.setModel(model);
 
     // Ask the provider whether the model is actually serving. `undefined` means

@@ -145,13 +145,20 @@ export async function initializeRuntime(): Promise<RuntimeInitResult> {
     }
   }
 
-  // Step 3 — pick an active provider: local-first, else online with a key.
+  // Step 3 — pick an active provider: honour the session pin when it is still
+  // answering, else local-first, else online with a key. Without this every
+  // re-init re-picked the first available local provider and silently moved
+  // generation off the provider the user had chosen.
   const localProviderIds: readonly string[] = LOCAL_PROVIDER_IDS;
   const onlineProviderIds: readonly string[] = ONLINE_PROVIDER_IDS;
   const isAvailable = (id: string) =>
     providerStatuses.find((s) => s.providerId === id && s.available);
 
+  const pinnedProvider = aiRuntime.session.getProvider();
+  const pinnedStatus = pinnedProvider ? isAvailable(pinnedProvider) : undefined;
+
   const activeProviderId =
+    pinnedStatus?.providerId ??
     localProviderIds.map((id) => isAvailable(id)).find(Boolean)?.providerId ??
     onlineProviderIds.map((id) => isAvailable(id)).find(Boolean)?.providerId ??
     "";
@@ -196,10 +203,17 @@ export async function initializeRuntime(): Promise<RuntimeInitResult> {
 
   // Step 6 — guarantee the resolved model is resident in memory. This is the
   // step that means the user never has to pre-load a model in LM Studio.
+  //
+  // Prefer the session model pin when it still exists on this provider so a
+  // Full Refresh does not silently fall back to the recommended model and
+  // un-pin the user's choice.
   let loadedModel = recommended;
   let didLoadModel = false;
   let modelLoadMessage: string | undefined;
-  const target = recommended || apiModels[0]!.id;
+  const pinnedModel = aiRuntime.session.getModel();
+  const pinStillValid =
+    pinnedModel !== null && apiModels.some((m) => m.id === pinnedModel);
+  const target = (pinStillValid ? pinnedModel! : null) || recommended || apiModels[0]!.id;
 
   const alreadyLoaded = activeStatus?.models.find((m) => m.id === target)?.loaded === true;
 

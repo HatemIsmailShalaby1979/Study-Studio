@@ -21,6 +21,8 @@ jest.mock("@/lib/ollama", () => ({
   ensureModel: jest.fn(),
   chat: jest.fn(),
   generate: jest.fn(),
+  releaseOtherModels: jest.fn().mockResolvedValue(undefined),
+  listResidentModels: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock("@/lib/tauri", () => ({
@@ -58,6 +60,8 @@ beforeEach(() => {
   mockTransport.ensureModel.mockResolvedValue("llama3.2:3b");
   mockTransport.chat.mockResolvedValue("reply");
   mockTransport.generate.mockResolvedValue("generated");
+  mockTransport.releaseOtherModels.mockResolvedValue(undefined);
+  mockTransport.listResidentModels.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -160,9 +164,11 @@ describe("OllamaProvider — models", () => {
     expect(mockTransport.getRecommendedModel).toHaveBeenCalledWith();
   });
 
-  it("delegates model resolution", async () => {
+  it("delegates model resolution and releases other resident models", async () => {
     await new OllamaProvider().ensureModel("llama3.2:3b");
     expect(mockTransport.ensureModel).toHaveBeenCalledWith("llama3.2:3b");
+    // One-model-per-provider: whatever else was resident is unloaded.
+    expect(mockTransport.releaseOtherModels).toHaveBeenCalledWith("llama3.2:3b");
   });
 });
 

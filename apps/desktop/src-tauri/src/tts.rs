@@ -22,9 +22,30 @@ pub struct TtsInfo {
 // ---------------------------------------------------------------------------
 
 const VOICE_IDS: &[&str] = &[
+    // English — US
     "en_US-lessac-medium",
     "en_US-amy-medium",
+    "en_US-ryan-medium",
+    "en_US-kristin-medium",
+    "en_US-hfc_male-medium",
+    "en_US-hfc_female-medium",
+    "en_US-bryce-medium",
+    "en_US-joe-medium",
+    "en_US-john-medium",
+    "en_US-sam-medium",
+    "en_US-norman-medium",
+    "en_US-mike-medium",
+    "en_US-reza_ibrahim-medium",
+    "en_US-ljspeech-medium",
+    "en_US-kathleen-low",
+    // English — UK
     "en_GB-alba-medium",
+    "en_GB-alan-medium",
+    "en_GB-northern_english_male-medium",
+    "en_GB-jenny_dioco-medium",
+    "en_GB-cori-medium",
+    "en_GB-southern_english_female-low",
+    // Arabic — official Piper repo ships only kareem (male).
     "ar_JO-kareem-medium",
 ];
 

@@ -72,6 +72,27 @@ describe("chatForJson", () => {
     );
   });
 
+  it("caps the KV-cache window at 32k for large budgets", async () => {
+    // The old ladder went to 65536 for anything above 16k, which made a 7B-12B
+    // model reserve more memory than the request could use — slow prefill and
+    // OOM risk with no benefit once max_tokens is a ceiling, not a target.
+    reply('{"title":"Photosynthesis"}');
+    await chatForJson("m", MESSAGES, SCHEMA, 32768);
+    expect(mockChat).toHaveBeenLastCalledWith(
+      MESSAGES,
+      expect.objectContaining({ numContext: 32768, maxTokens: 32768 }),
+      "m"
+    );
+
+    reply('{"title":"Photosynthesis"}');
+    await chatForJson("m", MESSAGES, SCHEMA, 8192);
+    expect(mockChat).toHaveBeenLastCalledWith(
+      MESSAGES,
+      expect.objectContaining({ numContext: 24576 }),
+      "m"
+    );
+  });
+
   it("threads the cancellation signal to the runtime", async () => {
     reply('{"title":"Photosynthesis"}');
     const controller = new AbortController();

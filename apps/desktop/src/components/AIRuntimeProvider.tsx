@@ -69,6 +69,12 @@ export interface AIRuntimeContextValue {
   refreshProviders: () => void;
   /** Pin a different provider for the session (Settings page). */
   setActiveProvider: (providerId: string) => void;
+  /**
+   * Pin a model for the session (Settings / Generate dropdowns). Loads it when
+   * the provider supports load-on-demand, rebinds skills, and keeps the pin
+   * across navigation until the user changes it again.
+   */
+  setActiveModel: (modelId: string) => Promise<void>;
 }
 
 const AIRuntimeContext = createContext<AIRuntimeContextValue>({
@@ -90,6 +96,7 @@ const AIRuntimeContext = createContext<AIRuntimeContextValue>({
   refresh: () => {},
   refreshProviders: () => {},
   setActiveProvider: () => {},
+  setActiveModel: async () => {},
 });
 
 export function useAIRuntime(): AIRuntimeContextValue {
@@ -182,7 +189,12 @@ export function AIRuntimeProvider({ children }: { children: ReactNode }) {
     aiRuntime.invalidateHealth();
     const statuses = await aiRuntime.discoverAll().catch(() => [] as AIProviderStatus[]);
     const isUp = (id: string) => statuses.find((s) => s.providerId === id && s.available);
+    // Keep the user's pinned provider when it is still answering; only fall
+    // back to local-first / online-first when the pin is gone or offline.
+    const pinned = aiRuntime.session.getProvider();
+    const pinnedUp = pinned ? isUp(pinned) : undefined;
     const active =
+      pinnedUp?.providerId ??
       LOCAL_IDS.map((id) => isUp(id)).find(Boolean)?.providerId ??
       ONLINE_IDS.map((id) => isUp(id)).find(Boolean)?.providerId ??
       "";
@@ -192,6 +204,12 @@ export function AIRuntimeProvider({ children }: { children: ReactNode }) {
       ? statuses.find((s) => s.providerId === active)
       : undefined;
     const models = activeStatus?.models ?? [];
+    // Drop a model pin that no longer exists on this provider so the UI does
+    // not show a selection the runtime cannot serve.
+    const pinnedModel = aiRuntime.session.getModel();
+    if (pinnedModel && !models.some((m) => m.id === pinnedModel)) {
+      aiRuntime.session.setModel(null);
+    }
     const canGenerate = computeCanGenerate(statuses);
     setState((prev) => ({
       ...prev,
@@ -227,6 +245,10 @@ export function AIRuntimeProvider({ children }: { children: ReactNode }) {
       }
 
       aiRuntime.session.setProvider(providerId || null);
+      // A model id is only meaningful on the provider that serves it — clear
+      // the pin so a later ensureModel cannot try to load the old provider's
+      // model on the new one.
+      aiRuntime.session.setModel(null);
       const models = target?.models ?? [];
       setState((prev) => ({
         ...prev,
@@ -238,9 +260,77 @@ export function AIRuntimeProvider({ children }: { children: ReactNode }) {
           size: m.size,
         })),
         recommendedModel: target?.recommendedModel ?? "",
+        loadedModel: "",
+        didLoadModel: false,
+        modelLoadMessage: undefined,
       }));
     },
     [state.providerStatuses]
+  );
+
+  /**
+   * Pin a model for the session: session → skill rebind → load-if-supported.
+   * The pin is the source of truth across navigation; generation never
+   * auto-switches away from it.
+   */
+  const setActiveModel = useCallback(
+    async (modelId: string) => {
+      const providerId = state.activeProviderId || undefined;
+      if (!modelId) {
+        aiRuntime.session.setModel(null);
+        setState((prev) => ({
+          ...prev,
+          loadedModel: "",
+          didLoadModel: false,
+          modelLoadMessage: undefined,
+        }));
+        return;
+      }
+
+      aiRuntime.session.setModel(modelId);
+      skillsBoundRef.current = true;
+      try {
+        const bound = bindDefaultSkills({
+          model: modelId,
+          providerId: providerId || "auto",
+        });
+        setActiveSkills(bound);
+      } catch (e) {
+        console.warn("[Skills] Rebind on model change failed:", e);
+      }
+
+      setState((prev) => ({
+        ...prev,
+        loadedModel: modelId,
+        didLoadModel: false,
+        modelLoadMessage: undefined,
+      }));
+
+      try {
+        if (aiRuntime.supportsModelLoading(providerId)) {
+          const result = await aiRuntime.ensureModelLoaded(modelId, providerId);
+          setState((prev) => ({
+            ...prev,
+            loadedModel: result.model,
+            didLoadModel: result.loaded,
+            modelLoadMessage: result.message,
+          }));
+        } else {
+          const resolved = await aiRuntime.ensureModel(modelId, providerId);
+          setState((prev) => ({
+            ...prev,
+            loadedModel: resolved,
+            didLoadModel: false,
+            modelLoadMessage: "Provider manages its own model lifecycle.",
+          }));
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Could not load this model.";
+        setState((prev) => ({ ...prev, modelLoadMessage: msg }));
+        throw e instanceof Error ? e : new Error(msg);
+      }
+    },
+    [state.activeProviderId]
   );
 
   useEffect(() => {
@@ -296,6 +386,7 @@ export function AIRuntimeProvider({ children }: { children: ReactNode }) {
         refresh: runInit,
         refreshProviders,
         setActiveProvider,
+        setActiveModel,
       }}
     >
       {children}

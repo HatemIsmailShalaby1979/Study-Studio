@@ -10,6 +10,8 @@ import {
   generate,
   ensureModel,
   listModels,
+  listResidentModels,
+  releaseOtherModels,
   extractJsonFromResponse,
   repairJson,
 } from "@/lib/ollama";
@@ -368,5 +370,96 @@ describe("generate format option", () => {
     const body = lastRequest!.body;
     expect(body.format).toEqual(schema);
     expect((body.options as Record<string, unknown>)?.format).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// one-model-per-provider — /api/ps + keep_alive:0 release
+// ---------------------------------------------------------------------------
+describe("listResidentModels / releaseOtherModels", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("lists models currently resident from /api/ps", async () => {
+    mockFetchJson({
+      models: [
+        { name: "gemma3:12b", model: "gemma3:12b" },
+        { name: "llama3.2:3b" },
+        { name: "" },
+      ],
+    });
+
+    await expect(listResidentModels()).resolves.toEqual(["gemma3:12b", "llama3.2:3b"]);
+    expect(lastRequest?.url).toContain("/api/ps");
+  });
+
+  it("returns an empty list when /api/ps is unreachable", async () => {
+    mockFetchStatus(500, "boom");
+    await expect(listResidentModels()).resolves.toEqual([]);
+  });
+
+  it("unloads every other resident model with keep_alive: 0", async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const mock = jest.fn(async (_url: string, init?: RequestInit) => {
+      requests.push({
+        url: String(_url),
+        body: init?.body ? JSON.parse(init.body as string) : {},
+      });
+      // First call is /api/ps, subsequent are /api/generate unload probes.
+      if (String(_url).endsWith("/api/ps")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            models: [{ model: "gemma3:12b" }, { model: "llama3.2:3b" }],
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({ model: "llama3.2:3b", done: true }) };
+    });
+    global.fetch = mock as unknown as typeof fetch;
+
+    await releaseOtherModels("gemma3:12b");
+
+    const generates = requests.filter((r) => r.url.endsWith("/api/generate"));
+    expect(generates).toHaveLength(1);
+    expect(generates[0].body.model).toBe("llama3.2:3b");
+    expect(generates[0].body.keep_alive).toBe(0);
+    expect(generates[0].body.prompt).toBe("");
+  });
+
+  it("does nothing when the keep-list is already the only resident model", async () => {
+    const mock = jest.fn(async (_url: string) => {
+      if (String(_url).endsWith("/api/ps")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ models: [{ model: "gemma3:12b" }] }),
+        };
+      }
+      throw new Error("should not generate");
+    });
+    global.fetch = mock as unknown as typeof fetch;
+
+    await releaseOtherModels("gemma3:12b");
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows release failures so the selected model still serves", async () => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    const mock = jest.fn(async (_url: string) => {
+      if (String(_url).endsWith("/api/ps")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            models: [{ model: "gemma3:12b" }, { model: "broken" }],
+          }),
+        };
+      }
+      throw new Error("server exploded");
+    });
+    global.fetch = mock as unknown as typeof fetch;
+
+    await expect(releaseOtherModels("gemma3:12b")).resolves.toBeUndefined();
   });
 });

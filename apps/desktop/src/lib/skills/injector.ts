@@ -9,7 +9,7 @@
 // same selection always produces the same prompt. That makes generation
 // reproducible and the injection testable.
 
-import { defaultSkill, getSkill, skillsForIntent } from "./registry";
+import { allTaskSkillSet, defaultSkill, getSkill, isMidSizeLocalModel, skillsForIntent } from "./registry";
 import type {
   ActiveSkillSummary,
   InjectedSkillContext,
@@ -154,17 +154,30 @@ function composePrompt(skills: SkillConfig[], systemPrompt: string): string {
  * Called once from `AIRuntimeProvider` when the runtime reports it can generate,
  * so the app is skill-guided from the first request without the user touching
  * the selector. Returns a summary safe to store in React state.
+ *
+ * Mid-size local models (7B-12B) bind the union of every task intent so the
+ * session default covers lessons, podcasts, audiobooks, and quizzes without a
+ * rebind when the task type changes.
  */
 export function bindDefaultSkills(options: {
   model: string;
   providerId?: string;
   intent?: SkillIntent;
 }): ActiveSkillSummary[] {
-  skillInjector.bind({
-    modelName: options.model || "auto",
-    providerId: options.providerId,
-    intent: options.intent ?? "lesson",
-  });
+  const model = options.model || "auto";
+  if (isMidSizeLocalModel(model, options.providerId)) {
+    skillInjector.bind({
+      modelName: model,
+      providerId: options.providerId,
+      skillIds: allTaskSkillSet().map((s) => s.id),
+    });
+  } else {
+    skillInjector.bind({
+      modelName: model,
+      providerId: options.providerId,
+      intent: options.intent ?? "lesson",
+    });
+  }
   return skillInjector.summaries();
 }
 

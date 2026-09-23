@@ -15,6 +15,7 @@ import {
   discoverInstalledVoices,
   listInstalledLanguages,
   downloadVoice,
+  VOICES,
   type DiscoveredVoiceInfo,
 } from "@/lib/tts";
 
@@ -105,15 +106,18 @@ function SettingsContent() {
     recommendedModel,
     providerStatuses,
     activeProviderId,
+    loadedModel,
     mode,
     ttsAvailable,
     refresh,
     refreshProviders,
     setActiveProvider,
+    setActiveModel,
   } = useAIRuntime();
 
   const [scanning, setScanning] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState(activeProviderId);
+  const [selectedModelId, setSelectedModelId] = useState(loadedModel || "");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [apiKeyStatus, setApiKeyStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [validating, setValidating] = useState(false);
@@ -129,10 +133,13 @@ function SettingsContent() {
   const [modelAction, setModelAction] = useState<{ ok: boolean; msg: string } | null>(null);
   const canLoadModels = aiRuntime.supportsModelLoading(selectedProvider || undefined);
 
-  // Sync the active provider from context.
+  // Sync the active provider + pinned model from context.
   useEffect(() => {
     if (activeProviderId) setSelectedProvider(activeProviderId);
   }, [activeProviderId]);
+  useEffect(() => {
+    setSelectedModelId(loadedModel || "");
+  }, [loadedModel, activeProviderId]);
 
   // Load TTS voice data on mount.
   useEffect(() => {
@@ -180,9 +187,32 @@ function SettingsContent() {
   const handleProviderChange = useCallback(
     (id: string) => {
       setSelectedProvider(id);
+      setSelectedModelId("");
       setActiveProvider(id);
     },
     [setActiveProvider]
+  );
+
+  /** Pin the selected model for the session (loads it when supported). */
+  const handleModelSelect = useCallback(
+    async (modelId: string) => {
+      setSelectedModelId(modelId);
+      setModelAction(null);
+      if (!modelId) return;
+      setLoadingModelId(modelId);
+      try {
+        await setActiveModel(modelId);
+        setModelAction({ ok: true, msg: `Pinned “${modelId}” for this session.` });
+      } catch (e) {
+        setModelAction({
+          ok: false,
+          msg: e instanceof Error ? e.message : `Could not select ${modelId}.`,
+        });
+      } finally {
+        setLoadingModelId(null);
+      }
+    },
+    [setActiveModel]
   );
 
   const handleValidateKey = useCallback(async () => {
@@ -454,10 +484,65 @@ function SettingsContent() {
             </div>
           )}
 
+          {/* Provider dropdown (session pin) */}
+          <div className="mb-4">
+            <label className="text-[11px] text-muted block mb-1.5">Active Provider</label>
+            <select
+              value={selectedProvider}
+              onChange={(e) => handleProviderChange(e.target.value)}
+              className="input-field text-sm"
+            >
+              {PROVIDERS.map((p) => {
+                const status = providerStatuses.find((s) => s.providerId === p.id);
+                return (
+                  <option key={p.id} value={p.id}>
+                    {p.emoji} {p.name}
+                    {status?.available ? "" : " (offline)"}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          {/* Model dropdown — pins the selection for the whole session */}
+          <div className="mb-4">
+            <label className="text-[11px] text-muted block mb-1.5">
+              Active Model {selectedStatus?.available ? `(${selectedStatus.models.length})` : ""}
+            </label>
+            {selectedStatus?.available && selectedStatus.models.length > 0 ? (
+              <select
+                value={selectedModelId}
+                onChange={(e) => void handleModelSelect(e.target.value)}
+                className="input-field text-sm"
+              >
+                <option value="">— Select a model —</option>
+                {selectedStatus.models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                    {m.loaded === true ? " (loaded)" : ""}
+                    {m.id === recommendedModel ? " ★" : ""}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-xs text-muted">
+                {selectedStatus?.available === false
+                  ? "Provider is not reachable."
+                  : "No models available for this provider."}
+              </p>
+            )}
+            {loadingModelId && selectedModelId === loadingModelId && (
+              <div className="flex items-center gap-2 mt-2 text-xs text-muted">
+                <div className="skeleton h-3 w-3 rounded-full" />
+                Loading model into memory…
+              </div>
+            )}
+          </div>
+
           {/* Model list */}
           <div>
             <label className="text-[11px] text-muted block mb-1.5">
-              Models {selectedStatus?.available ? `(${selectedStatus.models.length})` : ""}
+              All Models {selectedStatus?.available ? `(${selectedStatus.models.length})` : ""}
             </label>
             {selectedStatus?.available && selectedStatus.models.length > 0 ? (
               <>
@@ -478,6 +563,9 @@ function SettingsContent() {
                       >
                         <span className="truncate min-w-0">{m.name}</span>
                         <span className="flex items-center gap-1.5 shrink-0">
+                          {m.id === selectedModelId && (
+                            <span className="badge badge-primary text-[9px]">Active</span>
+                          )}
                           {m.id === recommendedModel && (
                             <span className="badge badge-primary text-[9px]">Best</span>
                           )}
@@ -495,7 +583,19 @@ function SettingsContent() {
                               {isLoaded ? "Loaded" : "Downloaded"}
                             </span>
                           )}
-                          {canLoadModels && canTell && !busy && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              m.id === selectedModelId
+                                ? undefined
+                                : void handleModelSelect(m.id)
+                            }
+                            disabled={m.id === selectedModelId || loadingModelId === m.id}
+                            className="text-[10px] text-primary hover:underline disabled:opacity-40"
+                          >
+                            {m.id === selectedModelId ? "✓ Active" : "Use"}
+                          </button>
+                          {canLoadModels && canTell && !busy && m.id !== selectedModelId && (
                             <button
                               type="button"
                               onClick={() =>
@@ -589,14 +689,11 @@ function SettingsContent() {
 
           {/* Download curated seed voices */}
           <div>
-            <label className="text-[11px] text-muted block mb-1.5">Download Recommended Voices</label>
+            <label className="text-[11px] text-muted block mb-1.5">
+              Download Voices ({VOICES.length} available)
+            </label>
             <div className="grid grid-cols-2 gap-2">
-              {[
-                { id: "en_US-lessac-medium", label: "English (US) — Lessac", lang: "en" },
-                { id: "en_US-amy-medium", label: "English (US) — Amy", lang: "en" },
-                { id: "en_GB-alba-medium", label: "English (UK) — Alba", lang: "en" },
-                { id: "ar_JO-kareem-medium", label: "العربية (JO) — كريم", lang: "ar" },
-              ].map((seed) => {
+              {VOICES.map((seed) => {
                 const installed = installedVoices.some((v) => v.id === seed.id);
                 return (
                   <button
@@ -611,7 +708,7 @@ function SettingsContent() {
                           : "border-card-border hover:border-primary/50 bg-card"
                     }`}
                   >
-                    <span className="font-medium">{seed.label}</span>
+                    <span className="font-medium">{seed.displayName}</span>
                     <div className="text-[10px] text-muted mt-0.5">
                       {installed
                         ? "✓ Installed"

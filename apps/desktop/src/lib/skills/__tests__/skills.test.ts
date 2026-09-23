@@ -10,6 +10,7 @@
 import {
   ALL_SKILLS,
   SkillInjector,
+  allTaskSkillSet,
   bindDefaultSkills,
   bindSkills,
   defaultSkill,
@@ -17,6 +18,7 @@ import {
   getSkill,
   hasSkill,
   humanizerSkill,
+  isMidSizeLocalModel,
   listSkills,
   skillsForIntent,
 } from "@/lib/skills";
@@ -245,6 +247,51 @@ describe("bindDefaultSkills / bindSkills", () => {
     const summaries = bindDefaultSkills({ model: "qwen2.5-7b", providerId: "lm-studio" });
     expect(summaries.length).toBeGreaterThan(0);
     expect(summaries.map((s) => s.id)).toContain("humanizer");
+  });
+
+  it("mid-size local models bind every task pack, not just the lesson set", () => {
+    const summaries = bindDefaultSkills({ model: "gemma3:12b", providerId: "ollama" });
+    const bound = summaries.map((s) => s.id);
+    for (const skill of allTaskSkillSet()) {
+      expect(bound).toContain(skill.id);
+    }
+    expect(bound.length).toBeGreaterThan(defaultSkillSet().map((s) => s.id).length);
+  });
+
+  it("smaller and online models keep the lean lesson set", () => {
+    const localSmall = bindDefaultSkills({ model: "llama3.2:3b", providerId: "ollama" });
+    const online = bindDefaultSkills({ model: "gemma3:12b", providerId: "openai" });
+    const allIds = new Set(allTaskSkillSet().map((s) => s.id));
+    const smallIds = new Set(localSmall.map((s) => s.id));
+    const onlineIds = new Set(online.map((s) => s.id));
+
+    // Mid-size packs include podcast/audio intents that the lesson-only set
+    // does not always cover — so either the set is strictly smaller, or at
+    // least not forced to the full union when it is not mid-size local.
+    expect(isMidSizeLocalModel("gemma3:12b", "openai")).toBe(false);
+    expect(isMidSizeLocalModel("llama3.2:3b", "ollama")).toBe(false);
+    expect(isMidSizeLocalModel("qwen3:8b", "ollama")).toBe(true);
+    expect(smallIds.size).toBeLessThan(allIds.size);
+    expect(onlineIds.size).toBeLessThan(allIds.size);
+  });
+
+  it("isMidSizeLocalModel only matches 7b/8b/9b/12b on local providers", () => {
+    expect(isMidSizeLocalModel("qwen2.5-7b", "lm-studio")).toBe(true);
+    expect(isMidSizeLocalModel("llama-12b")).toBe(true);
+    expect(isMidSizeLocalModel("phi3:mini")).toBe(false);
+    expect(isMidSizeLocalModel("gpt-4o", "openai")).toBe(false);
+    expect(isMidSizeLocalModel("70b-local", "ollama")).toBe(false);
+  });
+
+  it("allTaskSkillSet is the union of every intent, priority-ordered", () => {
+    const union = new Set<string>();
+    for (const intent of ["lesson", "podcast", "audio", "quiz", "research", "rewrite"] as const) {
+      for (const skill of skillsForIntent(intent)) union.add(skill.id);
+    }
+    const set = allTaskSkillSet();
+    expect(new Set(set.map((s) => s.id))).toEqual(union);
+    const priorities = set.map((s) => s.priority);
+    expect([...priorities].sort((a, b) => a - b)).toEqual(priorities);
   });
 
   it("bindSkills binds exactly what was asked for", () => {

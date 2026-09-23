@@ -26,7 +26,18 @@ jest.mock("@/lib/ai-runtime", () => ({
   aiRuntime: {
     discoverAll: jest.fn(),
     invalidateHealth: jest.fn(),
-    session: { setProvider: jest.fn() },
+    session: {
+      setProvider: jest.fn(),
+      getProvider: jest.fn(() => null),
+      setModel: jest.fn(),
+      getModel: jest.fn(() => null),
+    },
+    supportsModelLoading: jest.fn(() => false),
+    ensureModel: jest.fn(async (m?: string) => m || "model-a"),
+    ensureModelLoaded: jest.fn(async (m?: string) => ({
+      model: m || "model-a",
+      loaded: true,
+    })),
   },
 }));
 jest.mock("@/lib/skills", () => ({ bindDefaultSkills: jest.fn() }));
@@ -36,13 +47,24 @@ const mockInit = initializeRuntime as jest.MockedFunction<typeof initializeRunti
 const mockHasApiKey = hasApiKey as jest.MockedFunction<typeof hasApiKey>;
 const mockBind = bindDefaultSkills as jest.MockedFunction<typeof bindDefaultSkills>;
 const mockTts = isTtsAvailable as jest.MockedFunction<typeof isTtsAvailable>;
-// The mocked singleton — refreshProviders and setActiveProvider talk to it.
+// The mocked singleton — refreshProviders, setActiveProvider and setActiveModel talk to it.
 const mockAiRuntime = aiRuntime as unknown as {
   discoverAll: jest.Mock<Promise<AIProviderStatus[]>, []>;
   invalidateHealth: jest.Mock;
-  session: { setProvider: jest.Mock };
+  session: {
+    setProvider: jest.Mock;
+    getProvider: jest.Mock;
+    setModel: jest.Mock;
+    getModel: jest.Mock;
+  };
+  supportsModelLoading: jest.Mock;
+  ensureModel: jest.Mock;
+  ensureModelLoaded: jest.Mock;
 };
 const mockSetProvider = mockAiRuntime.session.setProvider;
+const mockSetModel = mockAiRuntime.session.setModel;
+const mockGetProvider = mockAiRuntime.session.getProvider;
+const mockGetModel = mockAiRuntime.session.getModel;
 
 const SKILLS: ActiveSkillSummary[] = [
   { id: "education", name: "Education", category: "education" },
@@ -101,6 +123,14 @@ function Probe() {
       </button>
       <button data-testid="pin-lmstudio" onClick={() => ctx.setActiveProvider("lm-studio")}>
         pin lm-studio
+      </button>
+      <button
+        data-testid="pin-model"
+        onClick={() => {
+          void ctx.setActiveModel("gemma3:12b").catch(() => undefined);
+        }}
+      >
+        pin model
       </button>
     </div>
   );
@@ -470,6 +500,110 @@ describe("AIRuntimeProvider — setActiveProvider (Settings pin)", () => {
     // Stays on the working provider; session was never told to switch.
     expect(text("activeProviderId")).toBe("lm-studio");
     expect(mockSetProvider).not.toHaveBeenCalledWith("openai");
+  });
+
+  it("clears the model pin when the active provider changes", async () => {
+    mockInit.mockResolvedValue(
+      initResult({
+        providerStatuses: [
+          { ...status("lm-studio"), models: [{ id: "m1", name: "M1" }], recommendedModel: "m1" },
+          { ...status("openai"), models: [{ id: "gpt", name: "GPT" }], recommendedModel: "gpt" },
+        ],
+        activeProviderId: "lm-studio",
+      })
+    );
+    mockHasApiKey.mockImplementation((id) => id === "openai");
+
+    renderProvider();
+    await settle();
+
+    await act(async () => {
+      screen.getByTestId("pin-openai").click();
+    });
+
+    // A model id only means something on the provider that serves it.
+    expect(mockSetModel).toHaveBeenCalledWith(null);
+  });
+});
+
+describe("AIRuntimeProvider — setActiveModel (session pin)", () => {
+  it("pins the model, rebinds skills, and resolves for self-managing providers", async () => {
+    mockInit.mockResolvedValue(initResult());
+    renderProvider();
+    await settle();
+
+    await act(async () => {
+      screen.getByTestId("pin-model").click();
+    });
+
+    await waitFor(() => expect(text("loadedModel")).toBe("gemma3:12b"));
+    expect(mockSetModel).toHaveBeenCalledWith("gemma3:12b");
+    expect(mockBind).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gemma3:12b", providerId: "lm-studio" })
+    );
+    expect(mockAiRuntime.ensureModel).toHaveBeenCalledWith("gemma3:12b", "lm-studio");
+    expect(text("modelLoadMessage")).toMatch(/manages its own model lifecycle/i);
+  });
+
+  it("keeps the pin and surfaces the failure when loading throws", async () => {
+    mockInit.mockResolvedValue(initResult());
+    mockAiRuntime.ensureModel.mockRejectedValueOnce(new Error("model not installed"));
+
+    renderProvider();
+    await settle();
+
+    await act(async () => {
+      screen.getByTestId("pin-model").click();
+    });
+
+    await waitFor(() => expect(text("modelLoadMessage")).toBe("model not installed"));
+    expect(mockSetModel).toHaveBeenCalledWith("gemma3:12b");
+    expect(text("initialized")).toBe("true");
+  });
+});
+
+describe("AIRuntimeProvider — refreshProviders preserves pins", () => {
+  it("keeps the session provider when it is still available after a re-scan", async () => {
+    mockInit.mockResolvedValue(
+      initResult({
+        providerStatuses: [{ ...status("lm-studio"), models: [{ id: "m1", name: "M1" }] }],
+        activeProviderId: "lm-studio",
+      })
+    );
+    mockGetProvider.mockReturnValueOnce("openai");
+    mockAiRuntime.discoverAll.mockResolvedValue([
+      { ...status("openai"), models: [{ id: "gpt", name: "GPT" }], recommendedModel: "gpt" },
+      { ...status("lm-studio"), models: [{ id: "m1", name: "M1" }], recommendedModel: "m1" },
+    ]);
+    mockHasApiKey.mockImplementation((id) => id === "openai");
+
+    renderProvider();
+    await settle();
+    expect(text("activeProviderId")).toBe("lm-studio");
+
+    await act(async () => {
+      screen.getByTestId("rescan").click();
+    });
+
+    await waitFor(() => expect(text("activeProviderId")).toBe("openai"), { timeout: 5000 });
+    expect(mockSetProvider).toHaveBeenCalledWith("openai");
+  });
+
+  it("drops a model pin that no longer exists on the provider", async () => {
+    mockInit.mockResolvedValue(initResult());
+    mockGetModel.mockReturnValueOnce("gone-model");
+    mockAiRuntime.discoverAll.mockResolvedValue([
+      { ...status("lm-studio"), models: [{ id: "m1", name: "M1" }], recommendedModel: "m1" },
+    ]);
+
+    renderProvider();
+    await settle();
+
+    await act(async () => {
+      screen.getByTestId("rescan").click();
+    });
+
+    await waitFor(() => expect(mockSetModel).toHaveBeenCalledWith(null), { timeout: 5000 });
   });
 });
 

@@ -17,6 +17,8 @@ export {
   listSkills,
   skillsForIntent,
   defaultSkillSet,
+  allTaskSkillSet,
+  isMidSizeLocalModel,
 } from "./registry";
 
 export {

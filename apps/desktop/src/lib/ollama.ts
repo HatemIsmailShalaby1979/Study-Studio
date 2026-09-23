@@ -139,7 +139,7 @@ export async function chat(
       temperature: options.temperature ?? 0.7,
       topP: options.top_p ?? 0.9,
       maxTokens: resolveNumPredict(options),
-      numCtx: options.num_ctx ?? 16384,
+      numCtx: options.num_ctx ?? DEFAULT_NUM_CTX,
       numGpu: options.num_gpu,
       keepAlive: options.keep_alive ?? "10m",
       format: options.format,
@@ -175,7 +175,7 @@ export async function generate(
       temperature: options.temperature ?? 0.7,
       topP: options.top_p ?? 0.9,
       maxTokens: resolveNumPredict(options),
-      numCtx: options.num_ctx ?? 16384,
+      numCtx: options.num_ctx ?? DEFAULT_NUM_CTX,
       numGpu: options.num_gpu,
       keepAlive: options.keep_alive ?? "10m",
       format: options.format,
@@ -374,6 +374,64 @@ export async function ensureModel(preferredModel?: string): Promise<string> {
 
   // No preference: auto-select the best available model
   return await getRecommendedModel(models);
+}
+
+/**
+ * Models currently resident in Ollama's memory (`GET /api/ps`).
+ * Empty list when the endpoint is unreachable — never throws.
+ */
+export async function listResidentModels(): Promise<string[]> {
+  try {
+    const res = await runtimeFetch(`${OLLAMA_URL}/api/ps`, {
+      signal: AbortSignal.timeout(3000),
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const models = Array.isArray(data?.models) ? data.models : [];
+    return models
+      .map((m: { model?: string; name?: string }) => m?.model || m?.name || "")
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Unload every resident model except `keepModelId`.
+ *
+ * Ollama has no dedicated unload endpoint: a `/api/generate` (or `/api/chat`)
+ * request with `keep_alive: 0` drops that model from memory when the request
+ * finishes. Sending an empty prompt is enough to trigger the unload without
+ * doing any real generation.
+ *
+ * Best-effort by design: one-model-per-provider is a memory policy, so a
+ * failed release must not block the model the user actually selected. Failures
+ * are logged and swallowed; the next request still goes to `keepModelId`.
+ */
+export async function releaseOtherModels(keepModelId: string): Promise<void> {
+  if (!keepModelId) return;
+  try {
+    const resident = await listResidentModels();
+    const others = resident.filter((id) => id !== keepModelId);
+    for (const other of others) {
+      try {
+        await ollamaFetch("/api/generate", {
+          model: other,
+          prompt: "",
+          keep_alive: 0,
+        });
+        log(`[Ollama] Released "${other}" to keep only "${keepModelId}".`);
+      } catch (e) {
+        console.warn(
+          `[Ollama] Could not release "${other}":`,
+          e instanceof Error ? e.message : e
+        );
+      }
+    }
+  } catch {
+    // Nothing released — the selected model still serves.
+  }
 }
 
 // Structured-output parsing + JSON repair live in the AI Runtime

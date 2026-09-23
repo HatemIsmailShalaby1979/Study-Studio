@@ -20,9 +20,30 @@ export interface PiperVoice {
 }
 
 export const VOICES: PiperVoice[] = [
+  // English — US
   { id: "en_US-lessac-medium", language: "en", accent: "US", gender: "male", displayName: "English (US) — Lessac" },
   { id: "en_US-amy-medium", language: "en", accent: "US", gender: "female", displayName: "English (US) — Amy" },
+  { id: "en_US-ryan-medium", language: "en", accent: "US", gender: "male", displayName: "English (US) — Ryan" },
+  { id: "en_US-kristin-medium", language: "en", accent: "US", gender: "female", displayName: "English (US) — Kristin" },
+  { id: "en_US-hfc_male-medium", language: "en", accent: "US", gender: "male", displayName: "English (US) — HFC Male" },
+  { id: "en_US-hfc_female-medium", language: "en", accent: "US", gender: "female", displayName: "English (US) — HFC Female" },
+  { id: "en_US-bryce-medium", language: "en", accent: "US", gender: "male", displayName: "English (US) — Bryce" },
+  { id: "en_US-joe-medium", language: "en", accent: "US", gender: "male", displayName: "English (US) — Joe" },
+  { id: "en_US-john-medium", language: "en", accent: "US", gender: "male", displayName: "English (US) — John" },
+  { id: "en_US-sam-medium", language: "en", accent: "US", gender: "male", displayName: "English (US) — Sam" },
+  { id: "en_US-norman-medium", language: "en", accent: "US", gender: "male", displayName: "English (US) — Norman" },
+  { id: "en_US-mike-medium", language: "en", accent: "US", gender: "male", displayName: "English (US) — Mike" },
+  { id: "en_US-reza_ibrahim-medium", language: "en", accent: "US", gender: "male", displayName: "English (US) — Reza Ibrahim" },
+  { id: "en_US-ljspeech-medium", language: "en", accent: "US", gender: "female", displayName: "English (US) — LJ Speech" },
+  { id: "en_US-kathleen-low", language: "en", accent: "US", gender: "female", displayName: "English (US) — Kathleen" },
+  // English — UK
   { id: "en_GB-alba-medium", language: "en", accent: "UK", gender: "female", displayName: "English (UK) — Alba" },
+  { id: "en_GB-alan-medium", language: "en", accent: "UK", gender: "male", displayName: "English (UK) — Alan" },
+  { id: "en_GB-northern_english_male-medium", language: "en", accent: "UK", gender: "male", displayName: "English (UK) — Northern Male" },
+  { id: "en_GB-jenny_dioco-medium", language: "en", accent: "UK", gender: "female", displayName: "English (UK) — Jenny Dioco" },
+  { id: "en_GB-cori-medium", language: "en", accent: "UK", gender: "female", displayName: "English (UK) — Cori" },
+  { id: "en_GB-southern_english_female-low", language: "en", accent: "UK", gender: "female", displayName: "English (UK) — Southern Female" },
+  // Arabic — the official Piper repo ships only kareem (male) for Arabic.
   { id: "ar_JO-kareem-medium", language: "ar", accent: "Jordanian", gender: "male", displayName: "العربية (الأردن) — كريم" },
 ];
 

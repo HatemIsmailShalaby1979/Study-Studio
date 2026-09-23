@@ -61,7 +61,11 @@ export async function chatForJson(
   numPredict: number,
   signal?: AbortSignal
 ): Promise<Record<string, unknown>> {
-  const numCtx = numPredict > 16384 ? 65536 : numPredict > 8192 ? 32768 : 24576;
+  // Cap the KV-cache window at 32k. The previous ladder topped out at 65536
+  // for large budgets, which asked a 7B-12B model to reserve far more memory
+  // than the request needs — slow prefill, OOM risk, and no benefit once
+  // `max_tokens` is treated as a ceiling rather than a target.
+  const numCtx = numPredict > 8192 ? 32768 : 24576;
   const rawContent = await aiRuntime.chat(
     messages,
     {

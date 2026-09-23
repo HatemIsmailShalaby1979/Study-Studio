@@ -27,13 +27,40 @@ describe("voicesForLanguage", () => {
     expect(ar).toEqual(["ar_JO-kareem-medium"]);
   });
 
-  it("lists all English voices", () => {
+  it("lists every seeded English voice (US + UK, male + female)", () => {
     const en = voicesForLanguage("en").map((v) => v.id);
     expect(en).toEqual([
       "en_US-lessac-medium",
       "en_US-amy-medium",
+      "en_US-ryan-medium",
+      "en_US-kristin-medium",
+      "en_US-hfc_male-medium",
+      "en_US-hfc_female-medium",
+      "en_US-bryce-medium",
+      "en_US-joe-medium",
+      "en_US-john-medium",
+      "en_US-sam-medium",
+      "en_US-norman-medium",
+      "en_US-mike-medium",
+      "en_US-reza_ibrahim-medium",
+      "en_US-ljspeech-medium",
+      "en_US-kathleen-low",
       "en_GB-alba-medium",
+      "en_GB-alan-medium",
+      "en_GB-northern_english_male-medium",
+      "en_GB-jenny_dioco-medium",
+      "en_GB-cori-medium",
+      "en_GB-southern_english_female-low",
     ]);
+  });
+
+  it("includes at least one male and one female voice per English region", () => {
+    const us = voicesForLanguage("en").filter((v) => v.accent === "US");
+    const uk = voicesForLanguage("en").filter((v) => v.accent === "UK");
+    for (const group of [us, uk]) {
+      expect(group.some((v) => v.gender === "male")).toBe(true);
+      expect(group.some((v) => v.gender === "female")).toBe(true);
+    }
   });
 });
 
