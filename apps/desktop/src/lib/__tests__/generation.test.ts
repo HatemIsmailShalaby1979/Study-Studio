@@ -8,7 +8,13 @@ import {
 import type { GeneratedLesson } from "@/lib/generation";
 import { ErrorCode } from "@/lib/error";
 import type { OllamaChatMessage } from "@/lib/ollama";
-import { validateLessonOutput } from "@/lib/validation";
+import {
+  GLOSSARY_QUIZ_JSON_SCHEMA,
+  LESSON_OUTLINE_JSON_SCHEMA,
+  LESSON_OUTPUT_JSON_SCHEMA,
+  LESSON_SECTIONS_BATCH_JSON_SCHEMA,
+  validateLessonOutput,
+} from "@/lib/validation";
 import type { ZodError } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -157,6 +163,77 @@ function messagesOf(call: unknown[]): OllamaChatMessage[] {
   return call[0] as OllamaChatMessage[];
 }
 
+/** The JSON Schema a chat call was constrained by (`format` in the options). */
+function schemaOf(call: unknown[]): unknown {
+  return (call[1] as { format?: unknown } | undefined)?.format;
+}
+
+/** How many calls were made against a given JSON Schema. */
+function callsWithSchema(schema: unknown): number {
+  return mockedChat.mock.calls.filter((c) => schemaOf(c) === schema).length;
+}
+
+const PARSED_LESSON = JSON.parse(VALID_LESSON_JSON) as {
+  title: string;
+  sections: { heading: string; content: string }[];
+  glossary: unknown[];
+  quiz: unknown[];
+};
+
+/** Fixtures for the chunked fallback path, derived from the one-shot lesson. */
+const VALID_OUTLINE_JSON = JSON.stringify({
+  title: PARSED_LESSON.title,
+  headings: PARSED_LESSON.sections.map((s) => s.heading),
+});
+const VALID_GLOSSARY_QUIZ_JSON = JSON.stringify({
+  glossary: PARSED_LESSON.glossary,
+  quiz: PARSED_LESSON.quiz,
+});
+/** The chunked path requests one section at a time. */
+const VALID_SECTION_BATCH_JSON = JSON.stringify({
+  sections: [PARSED_LESSON.sections[0]],
+});
+
+/**
+ * Route each chat call by the JSON Schema it carries.
+ *
+ * Routing by schema rather than by call index keeps these tests about the
+ * strategy — which request the generator makes next, and on which model —
+ * instead of about how many calls happened to precede it.
+ */
+function routeBySchema(over: {
+  oneShot?: () => string;
+  outline?: () => string;
+  section?: () => string;
+  glossaryQuiz?: () => string;
+}) {
+  mockedChat.mockImplementation(async (_messages, options) => {
+    const format = (options as { format?: unknown } | undefined)?.format;
+    if (format === LESSON_OUTPUT_JSON_SCHEMA) {
+      return over.oneShot ? over.oneShot() : VALID_LESSON_JSON;
+    }
+    if (format === LESSON_OUTLINE_JSON_SCHEMA) {
+      return over.outline ? over.outline() : VALID_OUTLINE_JSON;
+    }
+    if (format === LESSON_SECTIONS_BATCH_JSON_SCHEMA) {
+      return over.section ? over.section() : VALID_SECTION_BATCH_JSON;
+    }
+    if (format === GLOSSARY_QUIZ_JSON_SCHEMA) {
+      return over.glossaryQuiz ? over.glossaryQuiz() : VALID_GLOSSARY_QUIZ_JSON;
+    }
+    throw new Error(`unrouted chat call (format=${String(format)})`);
+  });
+}
+
+function schemaError(): ZodError {
+  try {
+    validateLessonOutput({ title: "Wrong shape" });
+  } catch (e) {
+    return e as ZodError;
+  }
+  throw new Error("expected validation to fail");
+}
+
 function systemMessageOf(call: unknown[]): string {
   const msgs = messagesOf(call);
   const system = msgs.find((m) => m.role === "system");
@@ -182,20 +259,6 @@ describe("generateLesson", () => {
     expect(mockedChat.mock.calls[0][2]).toBe("llama3.2:3b");
   });
 
-  it("retries the SAME model on recoverable (JSON) errors, up to the retry budget", async () => {
-    mockedChat
-      .mockRejectedValueOnce(new Error("Unexpected token '<' in JSON"))
-      .mockRejectedValueOnce(new Error("Failed to parse JSON response"))
-      .mockResolvedValueOnce(VALID_LESSON_JSON); // lesson succeeds on 3rd try
-
-    const lesson = await generateLesson({ topic: "Quantum computing" });
-
-    expect(lesson._model).toBe("llama3.2:3b");
-    expect(mockedChat.mock.calls.length).toBeGreaterThanOrEqual(3);
-    expect(mockedChat.mock.calls.slice(0, 3).every((c) => c[2] === "llama3.2:3b")).toBe(true);
-    expect(mockedEnsureModel).toHaveBeenCalledTimes(1);
-  });
-
   it("does NOT auto-switch when the selected model is missing", async () => {
     mockedChat.mockRejectedValue(new Error("Ollama error (404): model 'llama3.2:3b' not found"));
 
@@ -207,85 +270,106 @@ describe("generateLesson", () => {
     expect(mockedChat.mock.calls[0][2]).toBe("llama3.2:3b");
   });
 
-  it("retries the SAME model when the output fails the lesson schema (missing sections)", async () => {
-    const schemaError = (): ZodError => {
-      try {
-        validateLessonOutput({ title: "Wrong shape" });
-      } catch (e) {
-        return e as ZodError;
-      }
-      throw new Error("expected validation to fail");
-    };
-
-    mockedChat
-      .mockRejectedValueOnce(schemaError())
-      .mockRejectedValueOnce(schemaError())
-      .mockResolvedValueOnce(VALID_LESSON_JSON); // lesson succeeds on 3rd try
+  it("falls back to the chunked path, on the same model, when the one-shot fails recoverably", async () => {
+    routeBySchema({ oneShot: () => { throw schemaError(); } });
 
     const lesson = await generateLesson({ topic: "Quantum computing" });
 
-    expect(lesson._model).toBe("llama3.2:3b");
-    expect(mockedChat.mock.calls.length).toBeGreaterThanOrEqual(3);
-    expect(mockedChat.mock.calls.slice(0, 3).every((c) => c[2] === "llama3.2:3b")).toBe(true);
+    expect(lesson.title).toBe("Test Lesson");
+    expect(lesson.sections).toHaveLength(PARSED_LESSON.sections.length);
+    expect(mockedEnsureModel).toHaveBeenCalledTimes(1);
+    expect(mockedChat.mock.calls.every((c) => c[2] === "llama3.2:3b")).toBe(true);
   });
 
-  it("surfaces a readable message after schema failures exhaust the retry budget", async () => {
-    const schemaError = (): ZodError => {
-      try {
-        validateLessonOutput({ title: "Wrong shape" });
-      } catch (e) {
-        return e as ZodError;
-      }
-      throw new Error("expected validation to fail");
-    };
+  it("does not retry the one-shot request — a recoverable failure goes straight to chunking", async () => {
+    // The regression this guards: a retry is a reasonable strategy for a small
+    // request, but the one-shot lesson request is deliberately larger than a
+    // model will emit in one response, so a retry reproduces the same
+    // truncation — minutes of generation each time — and only then runs the
+    // fallback that exists for this failure. It must be attempted exactly once.
+    routeBySchema({ oneShot: () => { throw new Error("Unexpected end of JSON input"); } });
 
-    mockedChat.mockRejectedValue(schemaError());
+    await generateLesson({ topic: "Quantum computing" });
+
+    expect(callsWithSchema(LESSON_OUTPUT_JSON_SCHEMA)).toBe(1);
+    expect(callsWithSchema(LESSON_OUTLINE_JSON_SCHEMA)).toBeGreaterThanOrEqual(1);
+  });
+
+  it("retries each CHUNK of the fallback path on the same model", async () => {
+    // Chunk requests are small enough that a second attempt can genuinely
+    // differ, so the same-model retry belongs here rather than on the one-shot.
+    let outlineAttempts = 0;
+    routeBySchema({
+      oneShot: () => { throw schemaError(); },
+      outline: () => {
+        outlineAttempts += 1;
+        if (outlineAttempts === 1) throw new Error("Unexpected token < in JSON");
+        return VALID_OUTLINE_JSON;
+      },
+    });
+
+    const lesson = await generateLesson({ topic: "Quantum computing" });
+
+    expect(outlineAttempts).toBe(2);
+    expect(lesson.title).toBe("Test Lesson");
+  });
+
+  it("surfaces a readable message after the fallback path exhausts its retry budget", async () => {
+    routeBySchema({
+      oneShot: () => { throw schemaError(); },
+      outline: () => { throw schemaError(); },
+    });
 
     await expect(generateLesson({ topic: "Quantum computing" })).rejects.toMatchObject({
       code: ErrorCode.EXTERNAL_API_ERROR,
     });
-    // 4 direct calls (1 initial + 3 retries) + 4 chunked-outline calls (1 + 3)
-    // = 8, all the same model — no switch
-    expect(mockedChat).toHaveBeenCalledTimes(8);
+    // 1 one-shot attempt + 4 outline attempts (1 initial + 3 retries), all the
+    // same model — no switch. It used to be 8, because the one-shot was itself
+    // retried four times before the fallback started.
+    expect(mockedChat).toHaveBeenCalledTimes(5);
     expect(mockedChat.mock.calls.every((c) => c[2] === "llama3.2:3b")).toBe(true);
   });
 
-  it("classifies zod-shaped serialized errors as recoverable (same-model retry)", async () => {
+  it("classifies zod-shaped serialized errors as recoverable (falls back rather than aborting)", async () => {
     const zodLike = '[ { "code": "invalid_type", "expected": "array", "received": "undefined", "path": [ "sections" ], "message": "Required" } ]';
-    mockedChat
-      .mockRejectedValueOnce(new Error(zodLike))
-      .mockResolvedValueOnce(VALID_LESSON_JSON); // lesson succeeds on 2nd try
+    routeBySchema({ oneShot: () => { throw new Error(zodLike); } });
 
     const lesson = await generateLesson({ topic: "Quantum computing" });
 
     expect(lesson._model).toBe("llama3.2:3b");
-    expect(mockedChat.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(callsWithSchema(LESSON_OUTLINE_JSON_SCHEMA)).toBeGreaterThanOrEqual(1);
   });
 
   it("repairs common JSON slips (trailing commas / unquoted keys) from the model", async () => {
-    mockedChat
-      .mockResolvedValueOnce('{ title: "T", sections: [{ heading: "H", content: "C", },], }') // repaired but fails validation (too short)
-      .mockResolvedValueOnce(VALID_LESSON_JSON); // retry succeeds
+    // The repaired object parses but fails validation (far too short), so the
+    // run continues into the fallback path — what matters is that the repair
+    // pass ran rather than the raw text being handed to JSON.parse.
+    routeBySchema({
+      oneShot: () => '{ title: "T", sections: [{ heading: "H", content: "C", },], }',
+    });
 
     const lesson = await generateLesson({ topic: "Quantum computing" });
 
-    // First call was repaired but failed validation; lesson comes from the retry
     expect(lesson.title).toBe("Test Lesson");
-    expect(mockedChat.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(callsWithSchema(LESSON_OUTLINE_JSON_SCHEMA)).toBeGreaterThanOrEqual(1);
   });
 
   it("surfaces a readable message for malformed JSON after retries are exhausted", async () => {
-    mockedChat.mockRejectedValue(
-      new Error("Expected ',' or '}' after property value in JSON at position 112 (line 4 column 38)")
-    );
+    routeBySchema({
+      oneShot: () => {
+        throw new Error("Expected ',' or '}' after property value in JSON at position 112 (line 4 column 38)");
+      },
+      outline: () => {
+        throw new Error("Expected ',' or '}' after property value in JSON at position 112 (line 4 column 38)");
+      },
+    });
 
     const err = await generateLesson({ topic: "Quantum computing" }).catch((e: unknown) => e as { message: string; code: string });
 
     expect(err.message).toMatch(/malformed or truncated JSON/s);
     expect(err.code).toBe(ErrorCode.EXTERNAL_API_ERROR);
-    // recoverable → retried 4× direct (1 + 3), then 4× chunked outline (1 + 3)
-    // = 8 total
-    expect(mockedChat).toHaveBeenCalledTimes(8);
+    // 1 one-shot attempt + 4 outline attempts (1 + 3 retries) = 5 total
+    expect(mockedChat).toHaveBeenCalledTimes(5);
     expect(mockedChat.mock.calls.every((c) => c[2] === "llama3.2:3b")).toBe(true);
   });
 

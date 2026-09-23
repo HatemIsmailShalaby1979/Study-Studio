@@ -8,6 +8,7 @@
 import { aiRuntime } from "./ai-runtime";
 import type { AIProviderStatus } from "./ai-runtime/types";
 import { applyStoredConfigs } from "./ai-runtime/providerStore";
+import { isLocalUp } from "./ai-runtime/routing";
 import { generateLesson, generatePodcastOnly, type GenerateRequest, type GeneratedLesson } from "./generation";
 import { evaluateQuiz, type EvaluationResult } from "./evaluation";
 import { generateDiagnosticQuiz, type GenerateDiagnosticQuizOptions } from "./quizEngine";
@@ -76,19 +77,36 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * How many extra discovery passes to run while a just-spawned local runtime
+ * finishes booting, and how long to wait between them.
+ *
+ * This replaces a five-attempt, two-second retry loop that ran unconditionally
+ * against one hardcoded provider before discovery had even happened. The retry
+ * only helps in the one case where something *is* starting up, so it now runs
+ * only there: 3 x 1.5 s instead of 4 x 2 s, and never when a runtime is
+ * already answering.
+ */
+const BOOTSTRAP_RETRIES = 3;
+const BOOTSTRAP_RETRY_DELAY_MS = 1500;
+
+/**
  * One-stop AI runtime bootstrap called on app mount.
  *
- * 1. In Tauri: asks the active provider (via the Rust backend) to start its
- *    local server if it isn't already running.
- * 2. Retries listing models a few times to tolerate the brief window between
- *    process spawn and HTTP readiness.
- * 3. Runs full multi-provider discovery so the Settings page can show every
- *    provider's status, and picks an active provider: local-first, else an
- *    online provider with a stored key (seamless fallback).
+ * 1. **Runs full multi-provider discovery first.** Discovery is the cheap,
+ *    bounded call, and it is what tells the app which runtime is actually
+ *    serving models. The handshake used to do this last, after asking the
+ *    default provider for a model list it had no way to know was relevant.
+ * 2. **Boots a local runtime only when nothing local answered.** In Tauri this
+ *    asks the runtime to start itself and re-discovers. It used to run
+ *    unconditionally, which on a machine running LM Studio spawned
+ *    `ollama serve` and then polled it for up to 15 s — for a server the user
+ *    was not using.
+ * 3. Picks the active provider: local-first, else an online provider with a
+ *    stored key (seamless fallback), and pins it on the session.
  * 4. **Loads the selected model into memory.** On a runtime that separates
  *    downloaded from loaded (LM Studio), this is what removes the need to
  *    pre-load a model in the runtime's own UI. Best-effort: a failed load
- *    degrades to a clear message, never a crash.
+ *    degrades to a clear message, never a crash — and never blocks generation.
  * 5. Auto-selects the recommended model so it's pinned for subsequent calls.
  *
  * Never throws.
@@ -98,71 +116,58 @@ export async function initializeRuntime(): Promise<RuntimeInitResult> {
   // usable when no local server is present.
   applyStoredConfigs(aiRuntime);
 
-  // Step 1 — let the provider start its local runtime if needed.
-  if (isTauri()) {
+  // Step 1 — discovery. Everything downstream is derived from this.
+  //
+  // Previously this happened *after* a `listModels` call against whatever
+  // `resolveProviderId()` fell back to (the first registered provider, i.e.
+  // Ollama) with five retries two seconds apart. On an LM Studio machine that
+  // was ~10 s of retrying against a port nothing was listening on, before the
+  // app had even looked for a runtime that was running.
+  let providerStatuses = await aiRuntime.discoverAll().catch(() => [] as AIProviderStatus[]);
+
+  // Step 2 — nothing local answered, so ask a local runtime to start itself.
+  // Only in the desktop shell (a browser cannot spawn a process), and only when
+  // there is genuinely nothing to talk to.
+  if (isTauri() && !isLocalUp(providerStatuses)) {
     try {
       await aiRuntime.startRuntime();
     } catch (e) {
       console.warn("[AiInit] startRuntime:", e);
     }
-  }
+    providerStatuses = await aiRuntime.discoverAll().catch(() => [] as AIProviderStatus[]);
 
-  // Step 2 — fetch models with retries (default/local provider).
-  const MAX_RETRIES = 5;
-  const RETRY_DELAY_MS = 2000;
-
-  let localReady = false;
-  let models = await aiRuntime.listModels(undefined, true).catch(() => []);
-
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    if (models.length > 0) {
-      localReady = true;
-      break;
-    }
-    console.warn(
-      `[AiInit] Attempt ${attempt + 1}/${MAX_RETRIES}: no local models yet.`
-    );
-    if (attempt < MAX_RETRIES - 1) {
-      await sleep(RETRY_DELAY_MS);
-      models = await aiRuntime.listModels(undefined, true).catch(() => []);
+    // A freshly spawned runtime needs a moment before it accepts traffic. This
+    // retry exists for that window, which is the only case it can help — it is
+    // bounded, and it re-discovers rather than assuming which provider started.
+    for (let attempt = 0; attempt < BOOTSTRAP_RETRIES && !isLocalUp(providerStatuses); attempt++) {
+      await sleep(BOOTSTRAP_RETRY_DELAY_MS);
+      providerStatuses = await aiRuntime.discoverAll().catch(() => [] as AIProviderStatus[]);
     }
   }
-  void localReady;
 
-  // Step 3 — full multi-provider discovery (best-effort, never throws).
-  const providerStatuses = await aiRuntime.discoverAll().catch(() => [] as AIProviderStatus[]);
-
-  // Step 4 — pick an active provider: local-first, else online with a key.
-  // Keep this list in sync with LOCAL_PROVIDER_IDS in AIRuntimeProvider.tsx.
+  // Step 3 — pick an active provider: local-first, else online with a key.
   const localProviderIds: readonly string[] = LOCAL_PROVIDER_IDS;
   const onlineProviderIds: readonly string[] = ONLINE_PROVIDER_IDS;
   const isAvailable = (id: string) =>
     providerStatuses.find((s) => s.providerId === id && s.available);
 
-  let activeProviderId =
+  const activeProviderId =
     localProviderIds.map((id) => isAvailable(id)).find(Boolean)?.providerId ??
     onlineProviderIds.map((id) => isAvailable(id)).find(Boolean)?.providerId ??
     "";
 
-  // If the default/local provider is ready, pin the session provider to it so
-  // generation routes there. Otherwise route to the online fallback.
+  // Pin the session provider so generation routes there.
   if (activeProviderId) {
     aiRuntime.session.setProvider(activeProviderId);
   }
 
-  // Build the "primary" model list + recommended model from the active
-  // provider's status (falls back to the local list for back-compat).
+  // The active provider's own discovery already listed its models — there is no
+  // second listing here, because there is nothing a second one could add.
   const activeStatus = activeProviderId
     ? providerStatuses.find((s) => s.providerId === activeProviderId)
     : undefined;
-  const primaryModels = activeStatus?.models?.length
-    ? activeStatus.models
-    : models;
-  const recommended = activeStatus?.recommendedModel
-    ? activeStatus.recommendedModel
-    : primaryModels.length > 0
-      ? await aiRuntime.getRecommendedModel(activeProviderId || undefined, primaryModels).catch(() => "")
-      : "";
+  const primaryModels = activeStatus?.models ?? [];
+  const recommended = activeStatus?.recommendedModel ?? "";
 
   const apiModels = primaryModels.map((m) => ({
     id: m.id,
@@ -176,9 +181,7 @@ export async function initializeRuntime(): Promise<RuntimeInitResult> {
 
   if (!available) {
     // Nothing available — friendly guidance, never a crash.
-    const localDown = providerStatuses.every(
-      (s) => !localProviderIds.includes(s.providerId) || !s.available
-    );
+    const localDown = !isLocalUp(providerStatuses);
     return {
       available: false,
       models: [],
@@ -204,7 +207,11 @@ export async function initializeRuntime(): Promise<RuntimeInitResult> {
     if (aiRuntime.supportsModelLoading(activeProviderId || undefined)) {
       const result = await aiRuntime.ensureModelLoaded(target, activeProviderId || undefined);
       loadedModel = result.model;
-      didLoadModel = !alreadyLoaded;
+      // `didLoadModel` must reflect what actually happened. It used to be
+      // `!alreadyLoaded`, so a load that was attempted and *failed* still
+      // produced "Loaded <model> into memory for this session" — the UI
+      // asserting success for the one step that had just failed.
+      didLoadModel = result.loaded && !alreadyLoaded;
       modelLoadMessage = result.message;
       log(
         `[AiInit] 🧠 Model "${loadedModel}" ${didLoadModel ? "loaded into memory" : "already resident"}.`

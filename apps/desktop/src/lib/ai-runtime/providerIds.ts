@@ -13,10 +13,16 @@
  *
  * Order matters: it is the local-first preference order used when picking an
  * active provider and when presenting the list in Settings.
+ *
+ * LM Studio leads, matching the shipped product position (it is the provider
+ * with native model management; Ollama is the supported alternative). The
+ * constant used to lead with Ollama, so a machine running both silently routed
+ * to Ollama while the release notes said otherwise. It only decides ties —
+ * a runtime that is not answering never wins, whatever the order.
  */
 export const LOCAL_PROVIDER_IDS = [
-  "ollama",
   "lm-studio",
+  "ollama",
   "localai",
   "vllm",
   "litellm",

@@ -231,6 +231,40 @@ describe("AIRuntime — resolveProviderId", () => {
 
     expect(a.ensureModel).toHaveBeenCalled();
   });
+
+  it("prefers a provider that answered discovery over registration order", async () => {
+    // Regression: this used to fall through to "first registered provider"
+    // unconditionally, which is Ollama on every real install. A machine running
+    // only LM Studio therefore had every un-pinned request — and the whole init
+    // handshake — aimed at a server that was never started, with the failure
+    // surfacing as "No models available on Ollama (Local)" while a different
+    // local runtime was serving the model the user had selected.
+    const down = makeProvider("ollama", ["chat"], {
+      health: jest.fn().mockResolvedValue({ status: "offline", available: false, modelsCount: 0, recommendedModel: "" }),
+    });
+    const up = makeProvider("lm-studio");
+    const runtime = runtimeWith(down, up);
+
+    await runtime.discoverAll();
+    await runtime.ensureModel();
+
+    expect(up.ensureModel).toHaveBeenCalled();
+    expect(down.ensureModel).not.toHaveBeenCalled();
+  });
+
+  it("still prefers the session provider over a discovered one", async () => {
+    const down = makeProvider("ollama", ["chat"], {
+      health: jest.fn().mockResolvedValue({ status: "offline", available: false, modelsCount: 0, recommendedModel: "" }),
+    });
+    const up = makeProvider("lm-studio");
+    const runtime = runtimeWith(down, up);
+
+    await runtime.discoverAll();
+    runtime.session.setProvider("ollama");
+    await runtime.ensureModel();
+
+    expect(down.ensureModel).toHaveBeenCalled();
+  });
 });
 
 describe("AIRuntime — discovery", () => {
@@ -660,5 +694,34 @@ describe("AIRuntime — ensureModelLoaded", () => {
     await expect(runtimeWith(provider).ensureModelLoaded(undefined, "a")).rejects.toThrow(
       /not installed/
     );
+  });
+
+  it("reports `loaded: false` when the provider resolves a model it cannot make resident", async () => {
+    // The flag used to be the constant `true`, so the Generate page announced
+    // "Loaded <model> into memory for this session" for a load that had just
+    // failed, and the next request failed on top of it.
+    const provider = makeProvider("a", ["chat"], {
+      loadModel: jest.fn(),
+      ensureModel: jest.fn().mockResolvedValue("m"),
+      isModelLoaded: jest.fn().mockResolvedValue(false),
+    });
+
+    const result = await runtimeWith(provider).ensureModelLoaded(undefined, "a");
+
+    expect(result.model).toBe("m");
+    expect(result.loaded).toBe(false);
+    expect(result.message).toMatch(/not serving it yet/i);
+  });
+
+  it("reports `loaded: true` when the provider confirms residency", async () => {
+    const provider = makeProvider("a", ["chat"], {
+      loadModel: jest.fn(),
+      ensureModel: jest.fn().mockResolvedValue("m"),
+      isModelLoaded: jest.fn().mockResolvedValue(true),
+    });
+
+    const result = await runtimeWith(provider).ensureModelLoaded(undefined, "a");
+
+    expect(result.loaded).toBe(true);
   });
 });

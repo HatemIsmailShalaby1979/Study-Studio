@@ -30,7 +30,6 @@ import { detectLanguage, getLessonSystemPrompt } from "./generation/prompts";
 import type { LessonLanguage, GenerateRequest } from "./generation/prompts";
 import { generateLessonChunked, tryGenerateLessonOnce } from "./generation/lesson";
 import type { GeneratedLesson } from "./generation/lesson";
-import { retrySameModel } from "./generation/transport";
 import { generateHTML } from "./htmlExport";
 
 export type { GeneratedLesson, LessonLanguage, GenerateRequest };
@@ -44,8 +43,13 @@ export { detectLanguage, getLessonSystemPrompt, podcastChunkSystemPrompt } from 
  * Strategy: one-shot structured JSON first (fast, covers most lessons). If that
  * fails *recoverably* — truncation, malformed JSON, schema slip — fall back to
  * the chunked two-phase path. Both use the SAME model: this app never switches
- * models mid-generation (session model policy). `retrySameModel` retries a
- * recoverable failure against the same model, which is not a switch.
+ * models mid-generation (session model policy).
+ *
+ * The one-shot attempt is made once, not retried. A retry is a real strategy
+ * for a small request that can come back different; for a request whose whole
+ * purpose is to exceed what the model will emit in one response, it is three
+ * more minutes spent reaching the same truncation. `retrySameModel` still
+ * guards every *chunk* of the fallback path, where the requests are small.
  */
 export async function generateLesson(payload: GenerateRequest): Promise<GeneratedLesson> {
   let validatedData: GenerateRequest;
@@ -112,16 +116,24 @@ export async function generateLesson(payload: GenerateRequest): Promise<Generate
 
   const tryWithModel = async (): Promise<GeneratedLesson> => {
     try {
-      // Lesson: try one-shot structured JSON first (fast path).
-      return await retrySameModel(
-        selectedModel,
-        () => tryGenerateLessonOnce(selectedModel, lessonSystemMessage, userPromptWithJourney, requestLength, signal),
-        signal
-      );
+      // Lesson: one shot, then fall back. Deliberately NOT wrapped in
+      // `retrySameModel`.
+      //
+      // The one-shot request asks a local model for the entire lesson —
+      // 8-12 sections of 300-500 words plus glossary and quiz, up to 24 576
+      // tokens — in a single structured response. When that fails it fails
+      // *deterministically*: the same prompt at the same length overruns the
+      // same budget and gets truncated at the same place. Retrying it three
+      // times therefore spent three more full generations (minutes each on a
+      // 9B model) to reach the same error, and only then ran the fallback that
+      // exists for exactly this failure. One attempt, then chunk.
+      return await tryGenerateLessonOnce(selectedModel, lessonSystemMessage, userPromptWithJourney, requestLength, signal);
     } catch (e) {
       // One-shot lesson JSON failed recoverably (truncation, schema slip,
       // malformed JSON). Fall back to the chunked two-phase path with the SAME
-      // model — never switch models.
+      // model — never switch models. The chunked path keeps its own
+      // same-model retry per chunk, which is where a retry can actually help:
+      // each chunk is small enough that a second attempt is likely to differ.
       if (classifyGenerationError(e) === "recoverable") {
         console.warn("[generation] One-shot lesson JSON failed; falling back to chunked generation with the same model.");
         return generateLessonChunked(selectedModel, userPromptWithJourney, requestDifficulty, requestLanguage, requestLength, signal);

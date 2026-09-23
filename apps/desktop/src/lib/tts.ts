@@ -32,9 +32,20 @@ export function voicesForLanguage(lang: string): PiperVoice[] {
 }
 
 /**
- * The nested path under rhasspy/piper-voices where a voice's files actually
- * live, e.g. "ar_JO-kareem-medium" -> "ar/ar_JO/kareem/medium". The official
- * repo does NOT keep files at the top level; downloading from a flat path 404s.
+ * The nested DIRECTORY under rhasspy/piper-voices for a voice, e.g.
+ * "ar_JO-kareem-medium" -> "ar/ar_JO/kareem/medium".
+ *
+ * This is a directory, not a download base — do NOT append an extension to it.
+ * The official repo stores files as `<dir>/<voice_id>.onnx`, so
+ * `voiceRepoBase(id) + ".onnx"` resolves to `.../medium.onnx`, which 404s for
+ * every voice in the catalogue. That mistake was live in the Rust downloader and
+ * made every voice download fail, leaving the audiobook feature unreachable on a
+ * fresh install.
+ *
+ * Downloads are built by the Rust side (`voice_file_url` in `src-tauri/src/tts.rs`),
+ * which is the authority. This helper has no production caller and exists only as
+ * a path-building convenience; if you ever do need a URL here, it is
+ * `${voiceRepoBase(id)}/${id}.onnx`.
  */
 export function voiceRepoBase(voiceId: string): string {
   const [region, name, quality] = voiceId.split("-");

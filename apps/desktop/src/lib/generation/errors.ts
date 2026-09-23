@@ -27,12 +27,26 @@ import type { LessonLanguage } from "./prompts";
 export type GenerationErrorKind = "model-missing" | "recoverable" | "fatal";
 
 export function classifyGenerationError(e: unknown): GenerationErrorKind {
+  const msg = e instanceof Error ? e.message.toLowerCase() : String(e).toLowerCase();
+  // Checked FIRST, and deliberately before every keyword rule below.
+  //
+  // A reasoning model that exhausts its budget on thinking produces a perfectly
+  // valid HTTP 200 whose only fault is an empty answer, and the tempting
+  // reading of that is "malformed JSON" — a recoverable formatting slip.
+  // It is nothing of the sort: the same prompt at the same budget overruns the
+  // same budget, every time. Letting it fall through to the keyword rules left
+  // it correct only by accident (none of those keywords happened to appear in
+  // the message), and a single unrelated word added later would have turned it
+  // back into a retry that burns the budget three more times for the same
+  // nothing. See `ReasoningBudgetExhaustedError`.
+  if (msg.includes("spent its entire token budget on internal reasoning")) {
+    return "fatal";
+  }
   if (e instanceof ZodError) {
     // The model returned output that fails the lesson schema (e.g. a missing
     // `sections` array). Retry the SAME model — never switch models.
     return "recoverable";
   }
-  const msg = e instanceof Error ? e.message.toLowerCase() : String(e).toLowerCase();
   // Zod serializes issues as `[ { "code": "invalid_type", ..., "message": ... } ]`;
   // match that shape directly so schema failures are retried even if the error
   // was serialized (e.g. across an IPC boundary).
@@ -118,6 +132,48 @@ export function describeGenerationFailure(error: unknown, language?: LessonLangu
     };
   }
   const msg = error instanceof Error ? error.message : String(error);
+  // The model thought until it ran out of budget and never answered.
+  //
+  // This is the failure that made podcast generation impossible on reasoning
+  // models: the app's first podcast call is a 512-token title request, and a
+  // reasoning model spends all 512 tokens thinking and returns nothing. It was
+  // reported as a JSON problem, which sent the user looking for a formatting
+  // fault that does not exist. The fix is on the app's side (the app now asks
+  // the runtime to answer without thinking), so if this still surfaces, the
+  // model's runtime has refused that request — which is what the guidance says.
+  if (/spent its entire token budget on internal reasoning/i.test(msg)) {
+    return {
+      reason: "the model used its whole response budget on internal reasoning and never produced an answer",
+      guidance:
+        " This is a reasoning model whose runtime does not allow thinking to be turned off for it." +
+        " Choose a model that can answer directly (e.g. an instruct model), or pick a longer Length" +
+        " so the request has budget left over after thinking." +
+        languageHint,
+    };
+  }
+  // The runtime refused to load the model at all.
+  //
+  // This is what a local runtime reports when it cannot fit the model (or its
+  // GPU backend will not start), and it arrives as a 400 whose body is the
+  // server's own JSON — previously surfaced verbatim, so the user got
+  // `OpenAI error (400): {"error":{"message":...` and no idea what to do. The
+  // app never switches models, so the fix is always on the user's side and the
+  // message should say so.
+  if (
+    /failed to load (?:model|llm)/i.test(msg) ||
+    /model_load_failed/i.test(msg) ||
+    /insufficient (?:system )?resources|out of memory|cannot allocate/i.test(msg)
+  ) {
+    return {
+      reason:
+        "the runtime could not load this model into memory" +
+        (language === "ar" ? " (large multilingual models need more RAM)" : ""),
+      guidance:
+        " The model is still selected — the app never switches models for you. Try a smaller model," +
+        " or lower the context window in your runtime's own settings and load it there first." +
+        languageHint,
+    };
+  }
   if (
     /\bjson\b/i.test(msg) ||
     /\bunexpected (end|token|identifier)\b/i.test(msg) ||

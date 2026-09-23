@@ -172,9 +172,14 @@ export function AIRuntimeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Lighter refresh: re-run discovery + re-pick active provider without the
-  // Ollama bootstrap retry loop. Used by the Settings "Re-scan" button.
+  // bootstrap retry loop. Used by the Settings "Re-scan" button and after a
+  // model load/unload.
   const refreshProviders = useCallback(async () => {
     applyStoredConfigs(aiRuntime);
+    // An explicit re-scan must perform real probes. Without this the health
+    // monitor answered from its 10 s cache, so "Re-scan" reported what the app
+    // already believed instead of what is actually running.
+    aiRuntime.invalidateHealth();
     const statuses = await aiRuntime.discoverAll().catch(() => [] as AIProviderStatus[]);
     const isUp = (id: string) => statuses.find((s) => s.providerId === id && s.available);
     const active =

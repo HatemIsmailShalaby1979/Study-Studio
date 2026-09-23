@@ -28,18 +28,47 @@ const VOICE_IDS: &[&str] = &[
     "ar_JO-kareem-medium",
 ];
 
+/// HuggingFace base for the official Piper voice repository.
+const PIPER_VOICES_BASE_URL: &str =
+    "https://huggingface.co/rhasspy/piper-voices/resolve/main";
+
 /// The nested path under `rhasspy/piper-voices` where a voice's files live,
-/// e.g. "ar_JO-kareem-medium" -> "ar/ar_JO/kareem/medium". The official repo
-/// keeps files under `<lang>/<region>/<name>/<quality>/` — flat paths 404.
+/// **including the voice id as the file name**, e.g.
+/// `"ar_JO-kareem-medium"` -> `"ar/ar_JO/kareem/medium/ar_JO-kareem-medium"`.
+///
+/// The official repo stores `<lang>/<region>/<name>/<quality>/<voice_id>.onnx`,
+/// so the file name segment is not optional. Returning only the directory and
+/// letting the caller append an extension produced
+/// `.../en/en_US/lessac/medium.onnx`, which **404s for every voice** — so no
+/// voice could ever be downloaded, `isTtsAvailable()` stayed false forever, and
+/// the audiobook and podcast-audio features were unreachable in the desktop app.
+///
+/// Verified against the live repository: the old shape returned 404, and this
+/// shape returns 200 for `en_US-lessac-medium`, `en_US-amy-medium` and
+/// `ar_JO-kareem-medium` alike. `voice_file_url` below builds the URL and is
+/// asserted directly, because asserting the directory is what let the bug hide.
 fn voice_repo_path(voice_id: &str) -> String {
     let parts: Vec<&str> = voice_id.split('-').collect();
     if parts.len() >= 3 {
         let region = parts[0];
         let lang = region.split('_').next().unwrap_or(region);
-        format!("{lang}/{region}/{}/{quality}", parts[1], quality = parts[2])
+        format!(
+            "{lang}/{region}/{name}/{quality}/{voice_id}",
+            name = parts[1],
+            quality = parts[2]
+        )
     } else {
         voice_id.to_string()
     }
+}
+
+/// The exact download URL for one file of a voice, e.g.
+/// `.../en/en_US/lessac/medium/en_US-lessac-medium.onnx`.
+fn voice_file_url(voice_id: &str, extension: &str) -> String {
+    format!(
+        "{PIPER_VOICES_BASE_URL}/{}{extension}",
+        voice_repo_path(voice_id)
+    )
 }
 
 /// Pick a default voice: Arabic when the text contains Arabic script,
@@ -52,15 +81,39 @@ pub fn default_voice_for(text: &str) -> String {
     }
 }
 
+/// The smallest plausible size for a Piper voice model, in bytes.
+///
+/// A real voice is tens of megabytes even at the lowest quality. The floor
+/// exists because a *failed* download used to be written to disk as though it
+/// had succeeded: the 404 body from HuggingFace is the 15-byte text
+/// `Entry not found`. Because discovery only asked whether the file EXISTED,
+/// four such files made the app report text-to-speech as available — and then
+/// fail when Piper tried to load a text file as an ONNX model. One megabyte sits
+/// far below any real voice and far above any error body, so it separates the
+/// two without hard-coding a specific model's size.
+const MIN_VOICE_BYTES: u64 = 1_000_000;
+
+/// Whether a file on disk can plausibly be a Piper voice model.
+///
+/// This is a sanity check, not a validator: it cannot prove a model loads, and
+/// it is not meant to. It exists so that a truncated or error-body download is
+/// not advertised to the user as an installed voice.
+fn is_usable_voice_model(path: &Path) -> bool {
+    path.metadata()
+        .map(|m| m.is_file() && m.len() >= MIN_VOICE_BYTES)
+        .unwrap_or(false)
+}
+
 /// Return the list of voice IDs whose `.onnx` + `.onnx.json` files both exist
-/// in `model_dir`. Voices not yet downloaded are simply omitted.
+/// in `model_dir` AND look like a real model. Voices not yet downloaded are
+/// simply omitted.
 pub fn available_voices(model_dir: &Path) -> Vec<String> {
     VOICE_IDS
         .iter()
         .filter(|id| {
             let onnx = model_dir.join(format!("{}.onnx", id));
             let json = model_dir.join(format!("{}.onnx.json", id));
-            onnx.is_file() && json.is_file()
+            is_usable_voice_model(&onnx) && json.is_file()
         })
         .map(|id| id.to_string())
         .collect()
@@ -182,6 +235,12 @@ pub fn discover_installed_voices(model_dir: &Path) -> Vec<DiscoveredVoiceInfo> {
         if !json_path.is_file() {
             continue;
         }
+        // And skip a file that cannot be a real model — a failed download used
+        // to leave a 15-byte error body here, and reporting that as an installed
+        // voice is what made the app claim audio was ready and then fail.
+        if !is_usable_voice_model(&path) {
+            continue;
+        }
 
         let (lang_id, region, voice_name, quality) = parse_voice_id(&stem);
         let language = language_from_config(&json_path, &stem);
@@ -226,34 +285,39 @@ pub fn list_installed_languages(model_dir: &Path) -> Vec<String> {
 /// Download a voice model (`.onnx` + `.onnx.json`) from HuggingFace into
 /// `model_dir`. The two files are fetched in parallel.
 pub async fn download_voice(voice_id: &str, model_dir: &Path) -> Result<(), String> {
-    let base_url = format!(
-        "https://huggingface.co/rhasspy/piper-voices/resolve/main/{}",
-        voice_repo_path(voice_id)
-    );
-
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(15))
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
-    // Download .onnx and .onnx.json in parallel
-    let onnx_url = format!("{base_url}.onnx");
-    let json_url = format!("{base_url}.onnx.json");
+    // Download .onnx and .onnx.json in parallel. `voice_file_url` carries the
+    // voice id as the file name — appending the extension to the directory
+    // instead 404s for every voice.
+    let onnx_url = voice_file_url(voice_id, ".onnx");
+    let json_url = voice_file_url(voice_id, ".onnx.json");
 
     let onnx_fut = client.get(&onnx_url).send();
     let json_fut = client.get(&json_url).send();
 
     let (onnx_resp, json_resp) = tokio::join!(onnx_fut, json_fut);
 
+    // A 404 here is not a network failure, and saying so sent the user looking
+    // for a connectivity problem that did not exist. `error_for_status` is what
+    // turns "HuggingFace answered 404" into a message that names the voice and
+    // the URL that failed.
     let onnx_bytes = onnx_resp
         .map_err(|e| format!("Failed to download {voice_id}.onnx: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Voice file not found for {voice_id} ({e}): {onnx_url}"))?
         .bytes()
         .await
         .map_err(|e| format!("Failed to read {voice_id}.onnx bytes: {e}"))?;
 
     let json_bytes = json_resp
         .map_err(|e| format!("Failed to download {voice_id}.onnx.json: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Voice file not found for {voice_id} ({e}): {json_url}"))?
         .bytes()
         .await
         .map_err(|e| format!("Failed to read {voice_id}.onnx.json bytes: {e}"))?;
@@ -576,16 +640,115 @@ mod tests {
     fn repo_paths_are_nested() {
         assert_eq!(
             voice_repo_path("ar_JO-kareem-medium"),
-            "ar/ar_JO/kareem/medium"
+            "ar/ar_JO/kareem/medium/ar_JO-kareem-medium"
         );
         assert_eq!(
             voice_repo_path("en_US-lessac-medium"),
-            "en/en_US/lessac/medium"
+            "en/en_US/lessac/medium/en_US-lessac-medium"
         );
         assert_eq!(
             voice_repo_path("en_GB-alba-medium"),
-            "en/en_GB/alba/medium"
+            "en/en_GB/alba/medium/en_GB-alba-medium"
         );
+    }
+
+    /// The contract that actually matters: the URL the app requests.
+    ///
+    /// This replaces an assertion on the *directory* alone, which is what let
+    /// the bug hide. `voice_repo_path` returned a correct directory, the test
+    /// confirmed the directory, and the download then appended `.onnx` to it —
+    /// producing `.../medium.onnx`, a 404 for every voice in the catalogue. The
+    /// old test was green the whole time the audiobook feature was unreachable.
+    ///
+    /// The expected strings below were verified against the live repository:
+    /// the old shape returned 404, these return 200.
+    #[test]
+    fn voice_urls_point_at_real_files() {
+        assert_eq!(
+            voice_file_url("en_US-lessac-medium", ".onnx"),
+            "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx"
+        );
+        assert_eq!(
+            voice_file_url("en_US-amy-medium", ".onnx.json"),
+            "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json"
+        );
+        assert_eq!(
+            voice_file_url("ar_JO-kareem-medium", ".onnx"),
+            "https://huggingface.co/rhasspy/piper-voices/resolve/main/ar/ar_JO/kareem/medium/ar_JO-kareem-medium.onnx"
+        );
+    }
+
+    /// Every voice the app offers must produce a URL whose file name segment is
+    /// the voice id. This is the invariant that was broken, stated once so it
+    /// cannot be broken again by a catalogue addition.
+    #[test]
+    fn every_catalogued_voice_url_ends_with_its_id() {
+        for id in VOICE_IDS {
+            let url = voice_file_url(id, ".onnx");
+            assert!(
+                url.ends_with(&format!("/{id}.onnx")),
+                "URL for {id} does not name the voice file: {url}"
+            );
+            assert!(
+                !url.ends_with("/medium.onnx") && !url.contains("/medium.onnx"),
+                "URL for {id} points at a directory, not a file: {url}"
+            );
+        }
+    }
+
+    /// A failed download must not be advertised as an installed voice.
+    ///
+    /// The bytes below are not hypothetical: `%APPDATA%/com.studio.study/tts`
+    /// on this machine holds exactly these 15-byte files for all four curated
+    /// voices, left behind by the broken downloader. Because discovery only
+    /// checked that the file existed, the app reported text-to-speech as
+    /// available while every voice was unusable.
+    #[test]
+    fn a_failed_download_is_not_an_installed_voice() {
+        let dir = std::env::temp_dir().join("ss-voice-validity-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+
+        let onnx = dir.join("en_US-lessac-medium.onnx");
+        let json = dir.join("en_US-lessac-medium.onnx.json");
+
+        // Exactly what HuggingFace returns for a missing file.
+        std::fs::write(&onnx, b"Entry not found").expect("write error body");
+        std::fs::write(&json, b"{}").expect("write config");
+        assert!(
+            available_voices(&dir).is_empty(),
+            "a 404 body must not count as an installed voice"
+        );
+
+        // A file of a plausible size is accepted — the check is a floor, not a
+        // validator, and it must not reject real models.
+        std::fs::write(&onnx, vec![0u8; (MIN_VOICE_BYTES as usize) + 1]).expect("write model");
+        assert_eq!(
+            available_voices(&dir),
+            vec!["en_US-lessac-medium".to_string()]
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A voice discovered by the dynamic scan must pass the same check.
+    #[test]
+    fn discovery_skips_error_bodies_too() {
+        let dir = std::env::temp_dir().join("ss-voice-discovery-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+
+        std::fs::write(dir.join("de_DE-thorsten-medium.onnx"), b"Entry not found")
+            .expect("write error body");
+        std::fs::write(dir.join("de_DE-thorsten-medium.onnx.json"), b"{}").expect("write config");
+
+        let found = discover_installed_voices(&dir);
+        assert!(
+            !found.iter().any(|v| v.id == "de_DE-thorsten-medium"),
+            "the dynamic scan reported a failed download as installed"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

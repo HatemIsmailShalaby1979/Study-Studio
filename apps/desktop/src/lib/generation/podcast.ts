@@ -94,7 +94,8 @@ async function generatePodcastChunked(
   language: LessonLanguage,
   length?: string,
   voiceGenderA: "male" | "female" = "male",
-  voiceGenderB: "male" | "female" = "female"
+  voiceGenderB: "male" | "female" = "female",
+  signal?: AbortSignal
 ): Promise<GeneratedLesson> {
   const target = targetPodcastExchanges(difficulty, length);
   const source = trimSource(userPrompt);
@@ -108,7 +109,8 @@ async function generatePodcastChunked(
           { role: "user", content: userPrompt },
         ],
         PODCAST_TITLE_JSON_SCHEMA,
-        512
+        512,
+        signal
       )
     )
   );
@@ -129,7 +131,14 @@ async function generatePodcastChunked(
   // The loop is bounded by that validator instead, which is honest: the real
   // guarantee lives in `podcastChunkOutputSchema.min(2)`, and the test suite
   // pins it directly. Relaxing that minimum would need a real bound here.
+  //
+  // What the loop *does* need is a way out that is not "wait for it". A podcast
+  // is up to 12 sequential model calls, each of which can take minutes on a
+  // local model, and the only escape used to be closing the app. The signal is
+  // checked before every chunk so a cancel takes effect within one request
+  // rather than after the whole episode.
   while (script.length < target) {
+    if (signal?.aborted) throw new Error("Podcast generation cancelled.");
     const count = Math.min(PODCAST_CHUNK_LINES, target - script.length);
     const chunk = validatePodcastChunk(
       await retrySameModel(modelId, () =>
@@ -140,12 +149,15 @@ async function generatePodcastChunked(
             { role: "user", content: podcastChunkUserPrompt(titleData.title, source, script, count) },
           ],
           PODCAST_CHUNK_JSON_SCHEMA,
-          6144
+          6144,
+          signal
         )
       )
     );
     script.push(...chunk.lines);
   }
+
+  if (signal?.aborted) throw new Error("Podcast generation cancelled.");
 
   const glossaryQuiz = validateGlossaryQuiz(
     await retrySameModel(modelId, () =>
@@ -156,7 +168,8 @@ async function generatePodcastChunked(
           { role: "user", content: userPrompt },
         ],
         GLOSSARY_QUIZ_JSON_SCHEMA,
-        12288
+        12288,
+        signal
       )
     )
   );
@@ -196,7 +209,16 @@ export async function generatePodcastOnly(payload: {
   length?: string;
   voiceGenderA?: "male" | "female";
   voiceGenderB?: "male" | "female";
+  /**
+   * Cancellation signal. Read from the raw payload, not from `validatedData`:
+   * `generateLessonSchema` has no `signal` key and zod strips unknown keys, so
+   * the validated object would always be missing it. `generateLesson` reads its
+   * signal the same way for the same reason.
+   */
+  signal?: AbortSignal;
 }): Promise<{ podcastScript: GeneratedLesson["podcastScript"] }> {
+  const signal = payload.signal;
+
   let validatedData: GenerateRequest;
   try {
     validatedData = validateGenerateLesson(payload);
@@ -239,10 +261,16 @@ export async function generatePodcastOnly(payload: {
       requestLanguage,
       requestLength,
       voiceGenderA || "male",
-      voiceGenderB || "female"
+      voiceGenderB || "female",
+      signal
     );
     return { podcastScript: podcastLesson.podcastScript };
   } catch (error) {
+    // A cancellation is not a generation failure and must not be dressed up as
+    // one — the user asked for it, so say so.
+    if (signal?.aborted) {
+      throw new AppError("Podcast generation cancelled.", ErrorCode.EXTERNAL_API_ERROR);
+    }
     const { reason, guidance } = describeGenerationFailure(error, requestLanguage);
     throw new AppError(
       `Podcast generation with model "${selectedModel}" failed: ${reason}.${guidance}`,

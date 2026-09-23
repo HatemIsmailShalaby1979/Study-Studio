@@ -33,6 +33,26 @@ export function retryBackoffDelay(attempt: number): number {
  * Single structured-output request (Layer 1): ask the model for JSON constrained
  * by a JSON Schema via the runtime's `format` option. Falls back to the JSON
  * repair pass (Layer 2) for servers that ignore `format`.
+ *
+ * `reasoningEffort: "none"` is requested on every call, and this is the ONE
+ * place it is requested — every structured generation in the app (lesson
+ * one-shot, lesson chunks, podcast title, podcast chunks, glossary + quiz,
+ * evaluation, diagnostics) funnels through here.
+ *
+ * The reason is not speed, although it is ~6x faster. It is that a reasoning
+ * model's thinking tokens come out of the SAME `maxTokens` budget as its
+ * answer, and these are small, tightly-budgeted requests — a 512-token title,
+ * a 6-line dialogue chunk. Left to think, such a model spends the whole budget
+ * reasoning and returns an EMPTY answer, which then fails JSON parsing and
+ * reads as a formatting fault. Measured live against `qwen/qwen3.5-9b` at the
+ * real 512-token title budget: 512/512 tokens on reasoning, zero characters of
+ * answer, `finish_reason: "length"`. With this directive: valid JSON, zero
+ * reasoning tokens.
+ *
+ * Providers that cannot express it ignore it, and the runtime never assumes it
+ * was honoured — a model whose runtime mandates reasoning still reports the
+ * starvation accurately (see `ReasoningBudgetExhaustedError`) rather than
+ * pretending the request succeeded.
  */
 export async function chatForJson(
   modelId: string,
@@ -44,7 +64,14 @@ export async function chatForJson(
   const numCtx = numPredict > 16384 ? 65536 : numPredict > 8192 ? 32768 : 24576;
   const rawContent = await aiRuntime.chat(
     messages,
-    { maxTokens: numPredict, numContext: numCtx, temperature: 0.7, format: schema, signal },
+    {
+      maxTokens: numPredict,
+      numContext: numCtx,
+      temperature: 0.7,
+      format: schema,
+      reasoningEffort: "none",
+      signal,
+    },
     modelId
   );
   const jsonStr = extractJsonFromResponse(rawContent);

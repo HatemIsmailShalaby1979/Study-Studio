@@ -21,6 +21,7 @@ export { OllamaProvider } from "./providers/ollama";
 export {
   OpenAICompatibleProvider,
   OpenAICompatibleHTTPError,
+  ReasoningBudgetExhaustedError,
   openAIProviderProfiles,
 } from "./providers/openaiCompatible";
 export { LMStudioProvider, createLMStudioProvider, lmStudioOrigin } from "./providers/lmStudio";
@@ -58,7 +59,9 @@ export type {
   AIMessage,
   AIMessageRole,
   AICompletionOptions,
+  AIReasoningEffort,
   AIModel,
+  AIModelReasoning,
   AIModelProfile,
   AIModelLoadOptions,
   AIModelLoadResult,

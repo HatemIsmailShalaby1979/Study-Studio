@@ -25,6 +25,7 @@ jest.mock("@/lib/ai-runtime/providerStore", () => ({
 jest.mock("@/lib/ai-runtime", () => ({
   aiRuntime: {
     discoverAll: jest.fn(),
+    invalidateHealth: jest.fn(),
     session: { setProvider: jest.fn() },
   },
 }));
@@ -38,6 +39,7 @@ const mockTts = isTtsAvailable as jest.MockedFunction<typeof isTtsAvailable>;
 // The mocked singleton — refreshProviders and setActiveProvider talk to it.
 const mockAiRuntime = aiRuntime as unknown as {
   discoverAll: jest.Mock<Promise<AIProviderStatus[]>, []>;
+  invalidateHealth: jest.Mock;
   session: { setProvider: jest.Mock };
 };
 const mockSetProvider = mockAiRuntime.session.setProvider;
@@ -387,6 +389,25 @@ describe("AIRuntimeProvider — refreshProviders (Settings 'Re-scan')", () => {
     await waitFor(() => expect(text("activeProviderId")).toBe(""), { timeout: 5000 });
     expect(text("message")).toMatch(/no local model server detected/i);
     expect(text("canGenerate")).toBe("false");
+  });
+
+  it("invalidates the cached health before re-scanning", async () => {
+    // A re-scan answered from the health monitor's 10 s cache reports what the
+    // app already believed, not what is running — which is the one moment the
+    // user is explicitly asking it to look again.
+    mockInit.mockResolvedValue(initResult({ providerStatuses: [], activeProviderId: "" }));
+    mockAiRuntime.discoverAll.mockResolvedValue([]);
+    mockAiRuntime.invalidateHealth.mockClear();
+
+    renderProvider();
+    await settle();
+
+    await act(async () => {
+      screen.getByTestId("rescan").click();
+    });
+
+    await waitFor(() => expect(mockAiRuntime.discoverAll).toHaveBeenCalled());
+    expect(mockAiRuntime.invalidateHealth).toHaveBeenCalled();
   });
 
   it("does not crash when discovery itself throws", async () => {

@@ -35,6 +35,16 @@ export class AIRuntime {
   readonly session: SessionManager;
   readonly config: Readonly<AIRuntimeConfig>;
   private readonly healthMonitor: HealthMonitor;
+  /**
+   * Provider ids that answered the last discovery pass, in registration order.
+   *
+   * {@link resolveProviderId} consults this so an un-pinned request goes to a
+   * runtime that is actually serving models. It used to fall straight through
+   * to "first registered provider", which on every real install is Ollama —
+   * so a machine running only LM Studio had every un-pinned call (and the
+   * whole init handshake) aimed at a server that was never started.
+   */
+  private lastAvailableIds: string[] = [];
 
   constructor(opts: AIRuntimeOptions = {}) {
     this.providers = new ProviderRegistry();
@@ -90,47 +100,73 @@ export class AIRuntime {
    * Full discovery across every registered provider: health + models +
    * recommended model + capability report. Never throws — unavailable
    * providers are reported with `available: false`.
+   *
+   * Providers are probed **concurrently**. Sequentially, a discovery pass cost
+   * the *sum* of every provider's timeout (up to 5 s each for the hosted
+   * providers, plus a 3 s liveness probe for Ollama) even though the app only
+   * ever needed the first one that answered — on a machine with one local
+   * runtime up and three providers unreachable that was 10-20 s of dead time
+   * on every launch and every "Re-scan". Concurrently it costs the *slowest*
+   * single probe. Result order still follows registration order, because
+   * `Promise.all` preserves it.
    */
   async discoverAll(): Promise<AIProviderStatus[]> {
-    const statuses: AIProviderStatus[] = [];
-    for (const provider of this.providers.all()) {
-      try {
-        const health = await this.healthMonitor.check(provider);
-        let models: AIModel[] = [];
-        let recommendedModel = "";
-        if (health.available) {
-          try {
-            models = await provider.listModels(true);
-            this.models.setModels(provider.descriptor.id, models);
-            recommendedModel = models.length > 0 ? await provider.getRecommendedModel(models) : "";
-          } catch {
-            models = [];
-            recommendedModel = "";
-          }
-        }
-        statuses.push({
-          providerId: provider.descriptor.id,
-          available: health.available && models.length > 0,
-          models,
-          recommendedModel,
-          capabilities: provider.capabilities(),
-          message: health.message,
-        });
-      } catch (e) {
-        // Everything in this block must be incapable of throwing for the same
-        // reason the try block just did, or the catch is decorative.
-        // `capabilities()` is exactly such a call, hence `safeCapabilities`.
-        statuses.push({
-          providerId: provider.descriptor.id,
-          available: false,
-          models: [],
-          recommendedModel: "",
-          capabilities: this.safeCapabilities(provider),
-          message: e instanceof Error ? e.message : "Discovery failed",
-        });
-      }
-    }
+    const providers = this.providers.all();
+    const statuses = await Promise.all(providers.map((provider) => this.discoverOne(provider)));
+    this.lastAvailableIds = statuses.filter((s) => s.available).map((s) => s.providerId);
     return statuses;
+  }
+
+  /** Discovery for one provider. Isolated so one failure cannot affect another. */
+  private async discoverOne(provider: AIProvider): Promise<AIProviderStatus> {
+    const providerId = provider.descriptor.id;
+    try {
+      const health = await this.healthMonitor.check(provider);
+      let models: AIModel[] = [];
+      let recommendedModel = "";
+      if (health.available) {
+        try {
+          models = await provider.listModels(true);
+          this.models.setModels(providerId, models);
+          recommendedModel = models.length > 0 ? await provider.getRecommendedModel(models) : "";
+        } catch {
+          models = [];
+          recommendedModel = "";
+        }
+      }
+      return {
+        providerId,
+        available: health.available && models.length > 0,
+        models,
+        recommendedModel,
+        // Deliberately NOT `safeCapabilities` here. A provider that cannot
+        // report its capabilities is reported unavailable (the catch below
+        // handles it), which is the pinned contract — a caller must never act
+        // on a capability report that was never produced. `safeCapabilities` is
+        // only for the catch, where the throw is already being handled and the
+        // handler must not be able to throw again.
+        capabilities: provider.capabilities(),
+        message: health.message,
+      };
+    } catch (e) {
+      return {
+        providerId,
+        available: false,
+        models: [],
+        recommendedModel: "",
+        capabilities: this.safeCapabilities(provider),
+        message: e instanceof Error ? e.message : "Discovery failed",
+      };
+    }
+  }
+
+  /**
+   * Drop the cached health snapshots so the next discovery performs real
+   * probes. An explicit "Re-scan" must not be answered from a cache — that is
+   * the one moment the user is asking the app to look again.
+   */
+  invalidateHealth(): void {
+    this.healthMonitor.invalidateAll();
   }
 
   /** Health snapshot for a provider (cached; falls back to offline). */
@@ -197,6 +233,11 @@ export class AIRuntime {
       numContext: options.numContext ?? d?.numContext,
       numGpu: options.numGpu,
       keepAlive: options.keepAlive ?? d?.keepAlive,
+      // Passed through, never defaulted. A reasoning directive changes the
+      // shape of the model's answer, so the app must never apply one the caller
+      // did not ask for — and never assume one took effect. See
+      // `AICompletionOptions.reasoningEffort`.
+      reasoningEffort: options.reasoningEffort,
       format: options.format,
       tools: options.tools,
       toolChoice: options.toolChoice,
@@ -341,6 +382,12 @@ export class AIRuntime {
    * no manual pre-load in the runtime's own UI is ever required. On runtimes
    * that cannot load (Ollama pulls implicitly, hosted APIs always serve), it
    * degrades to plain resolution.
+   *
+   * The reported `loaded` flag is *checked*, not assumed. It used to be the
+   * constant `true`, so a provider that resolved a model it could not make
+   * resident still had the UI announce "ready" — and the very next request
+   * failed. Callers that only need a model id (generation) are unaffected;
+   * callers that report status to the user get the truth.
    */
   async ensureModelLoaded(
     preferredModel?: string,
@@ -352,25 +399,58 @@ export class AIRuntime {
 
     // Providers that implement load-on-demand (LM Studio) do the work inside
     // ensureModel, so a single call both resolves and loads.
-    if (provider.loadModel) {
-      const model = await provider.ensureModel(preferredModel);
-      this.session.setModel(model);
-      return { model, loaded: true };
-    }
-
     const model = await provider.ensureModel(preferredModel);
     this.session.setModel(model);
-    return { model, loaded: true, message: "Provider manages its own model lifecycle." };
+
+    // Ask the provider whether the model is actually serving. `undefined` means
+    // it cannot tell, which is not the same as "not loaded".
+    let resident: boolean | undefined;
+    if (provider.isModelLoaded) {
+      try {
+        resident = await provider.isModelLoaded(model);
+      } catch {
+        resident = undefined;
+      }
+    }
+
+    if (resident === false) {
+      return {
+        model,
+        loaded: false,
+        message:
+          "The runtime resolved this model but is not serving it yet. It will be loaded on the " +
+          "first request if the server allows that; if generation fails, pick a smaller model " +
+          "or lower the context window in the runtime's own settings.",
+      };
+    }
+
+    return {
+      model,
+      loaded: true,
+      message: provider.loadModel ? undefined : "Provider manages its own model lifecycle.",
+    };
   }
 
   // ─── Internals ─────────────────────────────────────────────────────────
 
   private resolveProviderId(): string {
-    return (
-      this.session.getProvider() ??
-      this.config.defaultProviderId ??
-      this.providers.all()[0]?.descriptor.id ?? ""
-    );
+    const session = this.session.getProvider();
+    if (session && this.providers.has(session)) return session;
+
+    // An explicitly configured default is intent, so it outranks discovery.
+    if (this.config.defaultProviderId && this.providers.has(this.config.defaultProviderId)) {
+      return this.config.defaultProviderId;
+    }
+
+    // Otherwise prefer a provider that actually answered the last discovery
+    // pass. Registration order is an implementation detail of the module that
+    // builds the runtime, and using it as the fallback meant "the first
+    // provider someone happened to register" — Ollama — decided where every
+    // un-pinned request went, whatever was actually running.
+    const available = this.lastAvailableIds.find((id) => this.providers.has(id));
+    if (available) return available;
+
+    return this.providers.all()[0]?.descriptor.id ?? "";
   }
 
   /** All capability flags a provider advertises (for capability UI). */

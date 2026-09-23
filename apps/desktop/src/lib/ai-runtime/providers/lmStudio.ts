@@ -27,12 +27,16 @@
 import { DISCOVERY_TIMEOUT_MS, OpenAICompatibleProvider, OpenAICompatibleHTTPError } from "./openaiCompatible";
 import type { OpenAICompatibleProviderOptions } from "./openaiCompatible";
 import { runtimeFetch } from "../transport";
+import { log } from "../../logger";
 import type {
+  AICompletionOptions,
   AIHealth,
+  AIMessage,
   AIModel,
   AIModelLoadOptions,
   AIModelLoadResult,
   AIModelProfile,
+  AIModelReasoning,
   AIProviderCapabilities,
   AIProviderStatus,
 } from "../types";
@@ -66,7 +70,49 @@ const DEFAULT_LOAD_CONTEXT = 16_384;
  */
 const MAX_AUTO_CONTEXT = 32_768;
 
+/**
+ * Context window tried when a load at the preferred window fails.
+ *
+ * A load that fails for memory reasons very often succeeds at a lower window,
+ * and the window we ask for is our own policy default (`MAX_AUTO_CONTEXT`), not
+ * something the model requires — the models here advertise up to 1 048 576.
+ * One retry at a smaller window therefore costs seconds and converts a class of
+ * hard failures into working generation. Nothing about the *model* changes, so
+ * this is not a model switch.
+ *
+ * Half the cap rather than as small as possible, deliberately: the app's own
+ * largest request (the podcast glossary + quiz call) budgets 12 288 output
+ * tokens against a prompt of roughly 2 000, so a window below 16 384 would
+ * rescue the *load* and then fail the *request* — trading one confusing error
+ * for another. If the model cannot fit even this, the chat call is the
+ * authority and reports it.
+ */
+const RETRY_LOAD_CONTEXT = 16_384;
+
+/**
+ * How long to keep polling for residency after a load request was accepted.
+ *
+ * The load POST itself blocks until the weights are in memory (measured: 165.9 s
+ * for a 4.23 GB model), so this poll is only a settle check for builds that
+ * answer 200 early. Budgeting it the full load timeout meant a model that never
+ * reports as resident held the UI for ten minutes after a load that had already
+ * succeeded or already failed.
+ */
+const LOAD_SETTLE_TIMEOUT_MS = 60_000;
+
 // ─── Native API shapes ───────────────────────────────────────────────────────
+
+/**
+ * The `capabilities.reasoning` block from `GET /api/v1/models`.
+ *
+ * LM Studio reports this only for models that can reason, and
+ * `allowed_options` is the set of values the server will accept — so it is the
+ * server's own statement of whether thinking can be turned off, not our guess.
+ */
+interface NativeReasoning {
+  allowed_options?: string[];
+  default?: string;
+}
 
 /** One entry from `GET /api/v1/models`. */
 interface NativeModel {
@@ -84,6 +130,13 @@ interface NativeModel {
   capabilities?: {
     vision?: boolean;
     trained_for_tool_use?: boolean;
+    /**
+     * Present only for models that can reason. `allowed_options` is the
+     * authoritative list of what the server will accept — a model advertising
+     * `["on"]` cannot be told to stop thinking, and one advertising
+     * `["off", "on"]` can.
+     */
+    reasoning?: NativeReasoning;
   };
 }
 
@@ -191,7 +244,10 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
 
     if (health.available) {
       try {
-        models = await this.listModels(true);
+        // Not `true`: `health()` above has just refreshed the native listing and
+        // stamped its timestamp, so a forced refresh here would repeat the same
+        // GET for a list that is microseconds old.
+        models = await this.listModels();
         recommendedModel = models.length > 0 ? await this.getRecommendedModel(models) : "";
         capabilities = await this.refineCapabilities(models);
       } catch {
@@ -230,6 +286,11 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
       if (isNativeV1Response(data)) {
         this.listingMode = "v1";
         this.nativeModels = data.models ?? [];
+        // Stamp the cache too. `health()` and `listModels()` are always called
+        // back-to-back by discovery, and without this stamp the second call saw
+        // a 0 timestamp, decided the list was stale, and issued the exact same
+        // GET again — one redundant round trip per discovery pass per provider.
+        this.listTimestamp = Date.now();
         const count = this.nativeModels.length;
         // Reuse the recommendation policy rather than hard-coding "". An empty
         // recommendedModel here silently broke every caller that reads it off
@@ -366,7 +427,17 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
         loaded: Array.isArray(m.loaded_instances) && m.loaded_instances.length > 0,
         contextWindow: m.max_context_length,
         supportsTools: m.capabilities?.trained_for_tool_use,
+        reasoning: toReasoning(m.capabilities?.reasoning),
       }));
+  }
+
+  /**
+   * Reasoning behaviour for a model id, as this server reports it.
+   * `undefined` when the server did not say — callers must not guess.
+   */
+  private reasoningFor(modelId: string): AIModelReasoning | undefined {
+    const entry = this.nativeModels.find((m) => m.key === modelId);
+    return toReasoning(entry?.capabilities?.reasoning);
   }
 
   /**
@@ -411,6 +482,19 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
    * the dropdown and generation just works, whether or not the model happened
    * to be loaded. Resolution policy (never silently switch models) is inherited
    * from the base class; only the load step is added.
+   *
+   * A load failure is **not** fatal here, and that is deliberate. This method is
+   * on the critical path of every generation request, and it used to throw on
+   * any load failure — so a runtime that refused the load we asked for (wrong
+   * context, guardrails, a GPU backend it cannot initialise) turned into
+   * "Failed to select a model" before a single token was requested. LM Studio
+   * loads models just-in-time on the first request, and the model id is the
+   * only thing `chat()` needs; if the runtime genuinely cannot serve the model,
+   * the chat call reports that, with the server's own reason. Failing early and
+   * loudly only added a fabricated diagnosis on top of a real error.
+   *
+   * Before giving up we retry once at a smaller context window, which covers
+   * the common "this window does not fit" failure.
    */
   override async ensureModel(preferredModel?: string): Promise<string> {
     const resolved = await super.ensureModel(preferredModel);
@@ -421,18 +505,27 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
 
     // `undefined` means the server cannot tell us. Attempting the load is still
     // correct: LM Studio treats a load of an already-loaded model as a no-op.
-    try {
-      await this.loadModel(resolved, { contextLength: this.preferredContext(resolved) });
-    } catch (e) {
-      // A failed load must not masquerade as a model-resolution failure. The
-      // chat call that follows will surface the real error, and the message
-      // here tells the user which step broke.
-      const detail = e instanceof Error ? e.message : String(e);
-      throw new Error(
-        `Found "${resolved}" in LM Studio but could not load it into memory: ${detail}. ` +
-          `Load it manually in LM Studio, or pick a smaller model.`
-      );
+    //
+    // Only a genuinely smaller window is worth retrying. A model whose own
+    // maximum is already at or below the fallback has nothing to give back, and
+    // asking for *more* than it reports would violate the same rule
+    // `preferredContext` exists to enforce.
+    const preferred = this.preferredContext(resolved);
+    const contexts = preferred > RETRY_LOAD_CONTEXT ? [preferred, RETRY_LOAD_CONTEXT] : [preferred];
+    for (const contextLength of contexts) {
+      try {
+        await this.loadModel(resolved, { contextLength });
+        return resolved;
+      } catch (e) {
+        const detail = e instanceof Error ? e.message : String(e);
+        console.warn(
+          `[lm-studio] Could not load "${resolved}" at a ${contextLength}-token context: ${detail}`
+        );
+      }
     }
+
+    // Not fatal — see the method comment. The next `chat()` request is the
+    // authority on whether this model can serve at all.
     return resolved;
   }
 
@@ -474,6 +567,23 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
       return { modelId, loaded: true, message: "Already loaded." };
     }
 
+    // Make room before asking for memory.
+    //
+    // LM Studio keeps every loaded model resident until its own idle TTL
+    // expires, and the app never asked it to release anything — so switching
+    // models in the dropdown stacked them up: 9B, then 12B, then 14B, all
+    // resident at once. Observed live on this machine: after selecting a 9B and
+    // a 7B, loading a 12B, a 14B and a 9.4B each failed with HTTP 500, and the
+    // 12B/14B attempts took 627 s and 673 s to fail. The app surfaced that as
+    // "could not load this model into memory" on every subsequent selection.
+    //
+    // The app shows exactly one selected model and generates with exactly one,
+    // so keeping one resident is the honest policy — and it is the only way a
+    // second model can fit. Released BEFORE the load, not after a failure:
+    // waiting for the server to run out of memory costs minutes and leaves the
+    // user with an error they cannot act on.
+    await this.releaseOtherResidentModels(modelId);
+
     const timeoutMs = options.timeoutMs ?? DEFAULT_LOAD_TIMEOUT_MS;
     const body: Record<string, unknown> = {
       model: modelId,
@@ -508,8 +618,10 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
       throw e;
     }
 
-    // Some builds answer 200 before the weights are resident. Poll briefly.
-    const loaded = await this.waitUntilLoaded(modelId, timeoutMs);
+    // Some builds answer 200 before the weights are resident. Poll briefly —
+    // bounded by LOAD_SETTLE_TIMEOUT_MS rather than by the load timeout, which
+    // the POST above has already spent.
+    const loaded = await this.waitUntilLoaded(modelId, Math.min(timeoutMs, LOAD_SETTLE_TIMEOUT_MS));
 
     // Refresh the cached listing so `loaded` flags in the UI are correct.
     await this.listModels(true).catch(() => []);
@@ -530,6 +642,54 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
     if (!instanceId) return; // not loaded — nothing to release
     await this.nativePost<unknown>("/api/v1/models/unload", { instance_id: instanceId }, 30_000);
     await this.listModels(true).catch(() => []);
+  }
+
+  /**
+   * Release every resident model except `keepModelId`.
+   *
+   * Best-effort by design: this exists to make room for a load that would
+   * otherwise fail, so a release that itself fails must not abort the load —
+   * the load attempt that follows is the authority on whether there is room.
+   * It is also idempotent and silent when nothing else is resident, which is
+   * the common case on a machine that only ever ran this app.
+   *
+   * A model the server reports without instance ids is skipped rather than
+   * guessed at: unloading by the wrong id could evict the model we are about
+   * to load.
+   */
+  private async releaseOtherResidentModels(keepModelId: string): Promise<void> {
+    try {
+      const data = await this.nativeGet<unknown>("/api/v1/models");
+      if (!isNativeV1Response(data)) return;
+      const others = (data.models ?? []).filter(
+        (m) =>
+          typeof m.key === "string" &&
+          m.key !== keepModelId &&
+          Array.isArray(m.loaded_instances) &&
+          m.loaded_instances.length > 0
+      );
+      for (const entry of others) {
+        for (const instance of entry.loaded_instances ?? []) {
+          if (typeof instance?.id !== "string" || !instance.id) continue;
+          try {
+            await this.nativePost<unknown>(
+              "/api/v1/models/unload",
+              { instance_id: instance.id },
+              30_000
+            );
+            log(`[lm-studio] Released "${entry.key}" to make room for "${keepModelId}".`);
+          } catch (e) {
+            // Leave it resident; the load below reports the real outcome.
+            console.warn(
+              `[lm-studio] Could not release "${entry.key}": ${e instanceof Error ? e.message : String(e)}`
+            );
+          }
+        }
+      }
+      if (others.length > 0) await this.listModels(true).catch(() => []);
+    } catch {
+      // Nothing released — proceed and let the load decide.
+    }
   }
 
   /**
@@ -602,6 +762,91 @@ export class LMStudioProvider extends OpenAICompatibleProvider {
     }
   }
 
+  // ─── Request shaping ─────────────────────────────────────────────────────
+
+  /**
+   * Guarantee the native listing is loaded before a request is shaped.
+   *
+   * The reasoning directive depends on per-model metadata that only the native
+   * listing carries, so shaping a request without it silently drops the
+   * directive — and the failure that causes is an EMPTY ANSWER, which is the
+   * hardest kind to diagnose. In the app's normal flow discovery has already
+   * populated the cache, but "works because an unrelated earlier call happened
+   * to run first" is not a guarantee, and the cost of making it one is a single
+   * cached call.
+   *
+   * Best-effort: if the listing cannot be fetched the request still goes out.
+   * A missing directive degrades to the model's own default, and the
+   * starvation check reports it honestly if the budget cannot cover it.
+   */
+  private async ensureNativeListing(): Promise<void> {
+    if (this.nativeModels.length > 0) return;
+    await this.listModels(true).catch(() => []);
+  }
+
+  /** {@inheritDoc OpenAICompatibleProvider.chat} */
+  override async chat(
+    messages: AIMessage[],
+    options: AICompletionOptions = {},
+    model?: string
+  ): Promise<string> {
+    await this.ensureNativeListing();
+    return super.chat(messages, options, model);
+  }
+
+  /** {@inheritDoc OpenAICompatibleProvider.streamChat} */
+  override async *streamChat(
+    messages: AIMessage[],
+    options: AICompletionOptions = {},
+    model?: string
+  ): AsyncIterable<string> {
+    await this.ensureNativeListing();
+    yield* super.streamChat(messages, options, model);
+  }
+
+  /**
+   * Add the reasoning directive to an outbound chat request.
+   *
+   * Why this is not in the base class: `reasoning_effort` is not part of the
+   * OpenAI `/v1` contract that every compatible server implements, and a strict
+   * host (OpenAI itself) rejects unknown values. Only a provider that can see
+   * the model's own reasoning metadata has any business sending it — which is
+   * exactly what the native listing gives us.
+   *
+   * The directive is sent when BOTH hold:
+   *  1. the caller asked for `reasoningEffort: "none"`, and
+   *  2. the model reports that it can reason at all.
+   *
+   * Requirement 2 is what protects models that cannot reason: a non-reasoning
+   * model carries no `reasoning` block, so it is never sent a directive it has
+   * no concept of.
+   *
+   * Requirement 2 is deliberately NOT `canDisable`. A model advertising
+   * `allowed_options: ["on"]` looks like it must refuse — but measured live on
+   * this machine, `zai-org/glm-4.6v-flash` (9.4B, `["on"]` only) accepts
+   * `reasoning_effort: "none"` and it changes the outcome completely at the
+   * app's 512-token title budget: without it, 511/512 tokens went to reasoning
+   * and the answer was EMPTY; with it, the model returned a real 189-character
+   * title. It does not eliminate thinking for that model (295 reasoning tokens
+   * remained), but it is the difference between an answer and no answer — so
+   * gating on `canDisable` would withhold the one directive that works.
+   *
+   * A server that genuinely rejects the field degrades instead of failing; see
+   * `isReasoningDirectiveRejection`.
+   */
+  protected override buildChatBody(
+    messages: AIMessage[],
+    options: AICompletionOptions,
+    model: string,
+    stream: boolean
+  ): Record<string, unknown> {
+    const body = super.buildChatBody(messages, options, model, stream);
+    if (options.reasoningEffort !== "none") return body;
+    if (this.reasoningFor(model)?.supported !== true) return body;
+    body["reasoning_effort"] = "none";
+    return body;
+  }
+
   // ─── Native transport ────────────────────────────────────────────────────
 
   private async nativeGet<T>(path: string): Promise<T> {
@@ -657,6 +902,29 @@ function formatBytes(bytes?: number): string | undefined {
   const gb = bytes / 1024 ** 3;
   if (gb >= 1) return `${gb.toFixed(1)} GB`;
   return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+}
+
+/**
+ * Translate the native `capabilities.reasoning` block into the runtime's
+ * per-model shape.
+ *
+ * `allowed_options` is what the server will actually accept, so it decides
+ * `canDisable`. A block that is present but lists no options is still evidence
+ * that the model reasons — we report `supported: true` and stay conservative
+ * about `canDisable` rather than inventing an option the server never listed.
+ *
+ * `undefined` (no block at all) means the server said nothing about reasoning,
+ * which is not the same as "this model does not reason" — but it does mean we
+ * have no licence to send a reasoning directive, so callers treat it as
+ * unsupported and leave the request alone.
+ */
+function toReasoning(raw: NativeReasoning | undefined): AIModelReasoning | undefined {
+  if (!raw) return undefined;
+  const allowed = Array.isArray(raw.allowed_options) ? raw.allowed_options : [];
+  const canDisable = allowed.includes("off");
+  const fallbackDefault: "on" | "off" = canDisable ? "off" : "on";
+  const declared = raw.default === "on" || raw.default === "off" ? raw.default : undefined;
+  return { supported: true, canDisable, default: declared ?? fallbackDefault };
 }
 
 /**

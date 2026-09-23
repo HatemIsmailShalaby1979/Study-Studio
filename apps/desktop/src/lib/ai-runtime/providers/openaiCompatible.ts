@@ -34,6 +34,14 @@ import type {
 export const MODEL_LIST_TTL_MS = 30_000; // 30 seconds
 export const DISCOVERY_TIMEOUT_MS = 5000;
 
+/**
+ * How many request constraints a server may reject before the request fails.
+ *
+ * Two today: the reasoning directive and `json_schema`. The bound exists so a
+ * server that rejects everything cannot turn one request into a retry storm.
+ */
+const MAX_REQUEST_DEGRADATIONS = 2;
+
 /** Thrown on a non-2xx response. Carries the raw HTTP status for probing. */
 export class OpenAICompatibleHTTPError extends Error {
   readonly status: number;
@@ -44,6 +52,46 @@ export class OpenAICompatibleHTTPError extends Error {
     this.name = "OpenAICompatibleHTTPError";
     this.status = status;
     this.body = body;
+  }
+}
+
+/**
+ * Thrown when a model returned no answer because it spent its entire token
+ * budget thinking.
+ *
+ * This is a real, observed failure and it is worth its own error type, because
+ * every generic description of it is wrong in a way that costs the user time.
+ * The response is a perfectly valid HTTP 200 with `finish_reason: "length"`,
+ * an empty `content`, and a full `reasoning_content` — so it arrives at the
+ * caller as "the model returned malformed JSON" and gets retried as though it
+ * were a transient formatting slip. It is not transient: the same prompt at the
+ * same budget overruns the same budget. Measured live on this machine against
+ * `qwen/qwen3.5-9b` at the app's real 512-token title budget — 512/512 tokens
+ * spent on reasoning, zero characters of answer, on every attempt.
+ *
+ * The remedy is a bigger budget or a model whose reasoning can be turned off
+ * (`reasoning_effort: "none"`), and only the user can choose either — so this
+ * is surfaced, never retried.
+ */
+export class ReasoningBudgetExhaustedError extends Error {
+  /** Reasoning tokens the runtime reported, when it reported them. */
+  readonly reasoningTokens?: number;
+  /** The `max_tokens` the request asked for. */
+  readonly maxTokens?: number;
+
+  constructor(reasoningTokens?: number, maxTokens?: number) {
+    const detail =
+      reasoningTokens !== undefined && maxTokens !== undefined
+        ? ` (${reasoningTokens} of ${maxTokens} tokens were internal reasoning)`
+        : "";
+    super(
+      "the model spent its entire token budget on internal reasoning and produced no answer" +
+        detail +
+        ". This model's runtime does not let the app turn its reasoning off"
+    );
+    this.name = "ReasoningBudgetExhaustedError";
+    this.reasoningTokens = reasoningTokens;
+    this.maxTokens = maxTokens;
   }
 }
 
@@ -333,22 +381,62 @@ export class OpenAICompatibleProvider implements AIProvider {
     model?: string
   ): Promise<string> {
     const selectedModel = model || (await this.ensureModel());
-    const body = this.buildChatBody(messages, options, selectedModel, false);
-    try {
-      const data = await this.postChatCompletion(body);
-      return this.extractContent(data);
-    } catch (e) {
-      // Some servers reject `json_schema` but accept `json_object`. Degrade
-      // the constraint rather than failing the whole request — the runtime's
-      // repair layer re-validates content anyway.
-      const format = body["response_format"] as { type?: string } | undefined;
-      if (this.isSchemaRejection(e) && format?.type === "json_schema") {
-        const retryBody = { ...body, response_format: { type: "json_object" } };
-        const data = await this.postChatCompletion(retryBody);
-        return this.extractContent(data);
+    let body = this.buildChatBody(messages, options, selectedModel, false);
+    let lastError: unknown;
+
+    // Degradation ladder. Start with the caller's full intent and give up one
+    // constraint at a time rather than failing the request outright — a server
+    // that dislikes one optional field should not cost the user their lesson.
+    // Bounded: there are only so many constraints to drop, and an unbounded
+    // loop here would be a retry storm against a server that is genuinely
+    // unhappy.
+    for (let attempt = 0; attempt <= MAX_REQUEST_DEGRADATIONS; attempt++) {
+      try {
+        const data = await this.postChatCompletion(body, options.signal);
+        return this.extractAnswer(data, options);
+      } catch (e) {
+        const degraded = this.degradeRequest(e, body);
+        if (!degraded) throw e;
+        lastError = e;
+        console.warn(
+          `[ai-runtime] ${this.descriptor.name} rejected a request constraint; retrying without it.`,
+          e instanceof Error ? e.message : e
+        );
+        body = degraded;
       }
-      throw e;
     }
+    throw lastError;
+  }
+
+  /**
+   * Drop one constraint the server rejected, or return `null` when nothing
+   * more can be relaxed.
+   *
+   * The two degradations are ordered most-specific first. Both keep the
+   * request *shape* intact — only the constraint the server objected to is
+   * removed — so the answer still comes back in the caller's requested format,
+   * just with less enforcement. The runtime's JSON repair layer re-validates
+   * content regardless, which is what makes relaxing a schema safe.
+   */
+  protected degradeRequest(
+    e: unknown,
+    body: Record<string, unknown>
+  ): Record<string, unknown> | null {
+    // 1. The server refuses the reasoning directive. Dropping it restores the
+    //    runtime's own default; the caller still gets an answer, and the
+    //    starvation check below reports it honestly if the budget cannot cover
+    //    the thinking.
+    if (body["reasoning_effort"] !== undefined && this.isReasoningDirectiveRejection(e)) {
+      const next = { ...body };
+      delete next["reasoning_effort"];
+      return next;
+    }
+    // 2. The server refuses `json_schema` but may accept loose `json_object`.
+    const format = body["response_format"] as { type?: string } | undefined;
+    if (this.isSchemaRejection(e) && format?.type === "json_schema") {
+      return { ...body, response_format: { type: "json_object" } };
+    }
+    return null;
   }
 
   /** Single-prompt completion via the chat protocol (universally supported). */
@@ -375,6 +463,7 @@ export class OpenAICompatibleProvider implements AIProvider {
       method: "POST",
       headers: this.authHeaders(),
       body: JSON.stringify(body),
+      signal: options.signal,
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
@@ -475,15 +564,56 @@ export class OpenAICompatibleProvider implements AIProvider {
     return body;
   }
 
-  private async postChatCompletion(body: Record<string, unknown>): Promise<ChatCompletion> {
+  private async postChatCompletion(
+    body: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<ChatCompletion> {
     return this.request<ChatCompletion>("/chat/completions", {
       method: "POST",
       body: JSON.stringify(body),
+      // The cancellation signal has to reach the request. It was accepted on
+      // `AICompletionOptions` and then dropped here, so the Cancel button
+      // stopped nothing: the HTTP request stayed open and the model kept
+      // generating until it finished on its own. Ollama's transport had the
+      // same defect, fixed earlier; this is the other half.
+      signal,
     });
   }
 
   protected extractContent(data: ChatCompletion): string {
     return data.choices?.[0]?.message?.content ?? "";
+  }
+
+  /**
+   * The assistant's answer, with "the model thought itself into silence"
+   * reported as the specific failure it is.
+   *
+   * An empty `content` accompanied by reasoning tokens means the budget was
+   * consumed before the model got to answer. Returning `""` here — which is
+   * what this did — hands the caller an empty string that fails JSON parsing
+   * and reads as a formatting problem, so the caller retries it and burns the
+   * same budget again for the same nothing. See
+   * {@link ReasoningBudgetExhaustedError}.
+   *
+   * A genuinely empty response with NO reasoning evidence is left alone: that
+   * is a different failure with a different cause, and inventing a reasoning
+   * diagnosis for it would be exactly the fabricated explanation this check
+   * exists to remove.
+   */
+  protected extractAnswer(data: ChatCompletion, options: AICompletionOptions = {}): string {
+    const content = this.extractContent(data);
+    if (content.trim().length > 0) return content;
+
+    const choice = data.choices?.[0];
+    const reasoningText = choice?.message?.reasoning_content ?? "";
+    const reasoningTokens = data.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+    const hasReasoningEvidence = reasoningTokens > 0 || reasoningText.trim().length > 0;
+    if (!hasReasoningEvidence) return content;
+
+    throw new ReasoningBudgetExhaustedError(
+      reasoningTokens > 0 ? reasoningTokens : undefined,
+      options.maxTokens ?? options.max_tokens
+    );
   }
 
   /** Whether an error signals "json_schema not supported by this server". */
@@ -494,10 +624,41 @@ export class OpenAICompatibleProvider implements AIProvider {
       /json_schema|response_format|structured output/i.test(e.body)
     );
   }
+
+  /**
+   * Whether an error signals "this server does not accept a reasoning
+   * directive".
+   *
+   * Only consulted when the outgoing body actually carried one, so a generic
+   * "unknown field" complaint can never be mistaken for this — the only field
+   * this class adds beyond the `/v1` contract is `reasoning_effort`.
+   */
+  private isReasoningDirectiveRejection(e: unknown): boolean {
+    return (
+      e instanceof OpenAICompatibleHTTPError &&
+      (e.status === 400 || e.status === 422) &&
+      /reasoning[_\s-]?(effort|budget)?|reasoning_effort/i.test(e.body)
+    );
+  }
 }
 
 export interface ChatCompletion {
-  choices?: { message?: { content?: string | null } }[];
+  choices?: {
+    message?: {
+      content?: string | null;
+      /**
+       * The model's internal reasoning, when the runtime separates it from the
+       * answer. This is thinking, not the answer — it must never be parsed as
+       * structured output.
+       */
+      reasoning_content?: string | null;
+    };
+    finish_reason?: string | null;
+  }[];
+  usage?: {
+    completion_tokens?: number;
+    completion_tokens_details?: { reasoning_tokens?: number };
+  };
 }
 
 /**

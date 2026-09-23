@@ -86,6 +86,14 @@ jest.mock("@/hooks/useTopicAudioPipeline", () => ({
   useTopicAudioPipeline: () => mockPipeline,
 }));
 
+// The runtime context is stubbed rather than provided, because this suite is
+// about LessonContent's own wiring. `canGenerate` is the switch under test: the
+// podcast SCRIPT is gated on it, and must not be gated on TTS.
+let mockCanGenerate = true;
+jest.mock("@/components/AIRuntimeProvider", () => ({
+  useAIRuntime: () => ({ canGenerate: mockCanGenerate }),
+}));
+
 // The heavy leaf components are not what this suite is about, and mocking them
 // keeps failures pointed at LessonContent's own wiring.
 jest.mock("@/components/Quiz", () => ({
@@ -270,6 +278,9 @@ beforeEach(() => {
   mockPipeline.isQuizActive = false;
   mockPipeline.state.htmlContent = null;
   mockPipeline.state.tempAudioPaths = {};
+  // Default to "a model is available", which is the normal state of the page
+  // this suite exercises; the unavailable case is asserted explicitly.
+  mockCanGenerate = true;
 
   mockGetLesson.mockResolvedValue(lesson());
   mockUpsertLesson.mockResolvedValue(true);
@@ -907,6 +918,37 @@ describe("LessonContent — podcast generation", () => {
     });
   });
 
+  it("hands the request a signal and aborts it from the Cancel button", async () => {
+    // A podcast is up to a dozen sequential model calls; without this the only
+    // way out of a slow run was to close the app.
+    let seen: AbortSignal | undefined;
+    mockGeneratePodcast.mockImplementation((payload: { signal?: AbortSignal }) => {
+      seen = payload.signal;
+      return new Promise((_resolve, reject) => {
+        payload.signal?.addEventListener("abort", () =>
+          reject(new Error("Podcast generation cancelled."))
+        );
+      });
+    });
+
+    await renderWith();
+    await openTab("podcast");
+    fireEvent.click(screen.getByRole("button", { name: /Generate Podcast/i }));
+
+    const cancel = await screen.findByRole("button", { name: /^Cancel$/i });
+    expect(seen).toBeInstanceOf(AbortSignal);
+    expect(seen!.aborted).toBe(false);
+
+    fireEvent.click(cancel);
+
+    expect(seen!.aborted).toBe(true);
+    // The user asked for it, so it is not reported as a failure.
+    await waitFor(() =>
+      expect(screen.queryByText(/Podcast generation cancelled/i)).not.toBeInTheDocument()
+    );
+    expect(await screen.findByRole("button", { name: /Generate Podcast/i })).toBeInTheDocument();
+  });
+
   it("leaves an existing script alone when the result carries none", async () => {
     mockGeneratePodcast.mockResolvedValue({});
     await renderWith();
@@ -917,12 +959,29 @@ describe("LessonContent — podcast generation", () => {
     expect(mockUpsertLesson).not.toHaveBeenCalled();
   });
 
-  it("disables generation while TTS is unavailable", async () => {
+  it("generates the script even when TTS is unavailable", async () => {
+    // Regression: the script button used to be gated on `isTts`, so a machine
+    // with no Piper voice installed — the state of a fresh install — could
+    // never produce a podcast at all, and the button said "TTS unavailable",
+    // pointing at the wrong subsystem. Script generation is text only.
     mockIsTtsAvailable.mockResolvedValue(false);
+    mockCanGenerate = true;
     await renderWith();
     await openTab("podcast");
 
-    expect(screen.getByRole("button", { name: /TTS unavailable/i })).toBeDisabled();
+    const button = screen.getByRole("button", { name: /Generate Podcast/i });
+    expect(button).toBeEnabled();
+
+    fireEvent.click(button);
+    await waitFor(() => expect(mockGeneratePodcast).toHaveBeenCalled());
+  });
+
+  it("disables script generation when no AI model is available", async () => {
+    mockCanGenerate = false;
+    await renderWith();
+    await openTab("podcast");
+
+    expect(screen.getByRole("button", { name: /No AI model available/i })).toBeDisabled();
   });
 
   it("offers Host A and Host B voice downloads while no script exists", async () => {

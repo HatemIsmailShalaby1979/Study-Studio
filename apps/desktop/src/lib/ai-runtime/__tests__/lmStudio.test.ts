@@ -3,6 +3,7 @@ import {
   createLMStudioProvider,
   lmStudioOrigin,
 } from "@/lib/ai-runtime/providers/lmStudio";
+import { ReasoningBudgetExhaustedError } from "@/lib/ai-runtime/providers/openaiCompatible";
 import { runtimeFetch } from "@/lib/ai-runtime/transport";
 
 // Characterisation tests for the native LM Studio provider.
@@ -722,26 +723,79 @@ describe("LMStudioProvider — ensureModel", () => {
     expect(await provider().ensureModel("ibm/granite-4-h-tiny")).toBe("ibm/granite-4-h-tiny");
   });
 
-  it("explains a failed load without pretending model resolution failed", async () => {
+  it("retries the load at a reduced context before giving up", async () => {
+    // Two attempts, not one: a load that fails because the requested window
+    // does not fit very often succeeds at a smaller one, and the window we ask
+    // for is our own policy default rather than something the model needs. The
+    // fallback is half the cap, not the smallest possible window — the app's
+    // biggest request needs 16k, so rescuing the load at less than that would
+    // only move the failure to the request.
+    const bodies: Record<string, unknown>[] = [];
+    mockFetch.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/models/load")) {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return errorResponse(500, "out of memory");
+      }
+      return jsonResponse({ models: [nativeModel()] });
+    });
+
+    await provider().ensureModel("ibm/granite-4-h-tiny");
+
+    expect(bodies.map((b) => b["context_length"])).toEqual([32_768, 16_384]);
+  });
+
+  it("never asks for more than the model reports when retrying", async () => {
+    // A model whose own maximum is below the cap has nothing to give back, so
+    // there is no smaller window to try — and asking for a *larger* one would
+    // break the rule `preferredContext` exists to enforce.
+    const bodies: Record<string, unknown>[] = [];
+    mockFetch.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/models/load")) {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return errorResponse(500, "out of memory");
+      }
+      return jsonResponse({ models: [nativeModel({ max_context_length: 8_192 })] });
+    });
+
+    await provider().ensureModel("ibm/granite-4-h-tiny");
+
+    expect(bodies.map((b) => b["context_length"])).toEqual([8_192]);
+  });
+
+  it("resolves the model instead of throwing when the runtime refuses to load it", async () => {
+    // This used to reject with "could not load it into memory ... pick a
+    // smaller model". It read as a model-*resolution* failure, and because
+    // `ensureModel` sits on the critical path of every generation request, any
+    // load hiccup aborted the request before a single token was asked for — the
+    // app reported "Failed to select a model" for a model it had successfully
+    // resolved. The chat call that follows is the authority on whether the
+    // model can serve, and LM Studio loads on demand.
     routeFetch({
       "/api/v1/models": () => jsonResponse({ models: [nativeModel()] }),
       "/api/v1/models/load": () => errorResponse(500, "out of memory"),
     });
 
-    await expect(provider().ensureModel("ibm/granite-4-h-tiny")).rejects.toThrow(
-      /could not load it into memory/i
+    await expect(provider().ensureModel("ibm/granite-4-h-tiny")).resolves.toBe(
+      "ibm/granite-4-h-tiny"
     );
   });
 
-  it("suggests a smaller model when the load fails", async () => {
-    routeFetch({
-      "/api/v1/models": () => jsonResponse({ models: [nativeModel()] }),
-      "/api/v1/models/load": () => errorResponse(500, "out of memory"),
+  it("does not attempt a load when the model is already resident", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    mockFetch.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/models/load")) {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return jsonResponse({});
+      }
+      return jsonResponse({ models: [nativeModel({ loaded_instances: [{ id: "i" }] })] });
     });
 
-    await expect(provider().ensureModel("ibm/granite-4-h-tiny")).rejects.toThrow(
-      /pick a smaller model/i
-    );
+    await provider().ensureModel("ibm/granite-4-h-tiny");
+
+    expect(bodies).toEqual([]);
   });
 });
 
@@ -754,3 +808,369 @@ describe("createLMStudioProvider", () => {
     expect(p.baseUrl).toBe("http://localhost:1234/v1");
   });
 });
+
+// ─── Reasoning control ───────────────────────────────────────────────────────
+//
+// These pin the fix for the defect that made podcast generation impossible on
+// the reasoning models installed on this machine (9B/12B/14B class). A
+// reasoning model's thinking tokens are drawn from the same `maxTokens` budget
+// as its answer, so a small structured-output request — the app's first podcast
+// call is a 512-token title — was answered with NOTHING: 512/512 tokens spent
+// reasoning, `content` empty, `finish_reason: "length"`. The app then reported
+// a JSON parsing fault and retried the same model three more times.
+//
+// Measured live against `qwen/qwen3.5-9b` with the app's real request shape:
+// no directive -> 0 characters of content, 512 reasoning tokens;
+// `reasoning_effort: "none"` -> valid JSON, 0 reasoning tokens, 6x faster.
+
+/** A model entry that reports reasoning with the given allowed options. */
+function reasoningModel(allowed: string[], declaredDefault?: string) {
+  return nativeModel({
+    key: "qwen/qwen3.5-9b",
+    capabilities: {
+      trained_for_tool_use: true,
+      reasoning: { allowed_options: allowed, default: declaredDefault },
+    },
+  });
+}
+
+/** Capture the chat-completions body the provider actually sends. */
+async function captureChatBody(
+  p: LMStudioProvider,
+  options: Record<string, unknown>,
+  models: unknown[] = [reasoningModel(["off", "on"], "on")],
+  completion: unknown = { choices: [{ message: { content: "{}" }, finish_reason: "stop" }] }
+): Promise<Record<string, unknown>> {
+  let sent: Record<string, unknown> | undefined;
+  mockFetch.mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/chat/completions")) {
+      sent = JSON.parse(String(init?.body));
+      return jsonResponse(completion);
+    }
+    return jsonResponse({ models });
+  });
+  await p.chat([{ role: "user", content: "hi" }], options, "qwen/qwen3.5-9b");
+  return sent!;
+}
+
+describe("LMStudioProvider — reasoning metadata", () => {
+  it("reports support and that reasoning can be turned off", async () => {
+    routeFetch({
+      "/api/v1/models": () =>
+        jsonResponse({ models: [reasoningModel(["off", "on"], "on")] }),
+    });
+
+    const [model] = await provider().listModels();
+
+    expect(model!.reasoning).toEqual({ supported: true, canDisable: true, default: "on" });
+  });
+
+  it("reports mandatory reasoning as not disableable", async () => {
+    // zai-org/glm-4.6v-flash lists only "on".
+    routeFetch({
+      "/api/v1/models": () => jsonResponse({ models: [reasoningModel(["on"], "on")] }),
+    });
+
+    const [model] = await provider().listModels();
+
+    expect(model!.reasoning).toEqual({ supported: true, canDisable: false, default: "on" });
+  });
+
+  it("assumes reasoning is on when a block lists no options", async () => {
+    // Evidence the model reasons, but no licence to claim it can be stopped.
+    routeFetch({ "/api/v1/models": () => jsonResponse({ models: [reasoningModel([])] }) });
+
+    const [model] = await provider().listModels();
+
+    expect(model!.reasoning).toEqual({ supported: true, canDisable: false, default: "on" });
+  });
+
+  it("reports no reasoning metadata for a model with no reasoning block", async () => {
+    // qwen2.5-7b-instruct-uncensored carries vision/tool flags and no reasoning.
+    routeFetch({ "/api/v1/models": () => jsonResponse({ models: [nativeModel()] }) });
+
+    const [model] = await provider().listModels();
+
+    expect(model!.reasoning).toBeUndefined();
+  });
+});
+
+describe("LMStudioProvider — reasoning directive on the wire", () => {
+  it("asks the model to answer without thinking when the caller requests it", async () => {
+    const body = await captureChatBody(provider(), { reasoningEffort: "none" });
+
+    expect(body["reasoning_effort"]).toBe("none");
+  });
+
+  it("sends the directive even when the server lists only 'on'", async () => {
+    // The empirically important case: glm-4.6v-flash advertises ["on"], yet
+    // sending "none" changed an EMPTY 512-token answer into a real one.
+    // Gating on `canDisable` would have withheld the one directive that works.
+    const body = await captureChatBody(
+      provider(),
+      { reasoningEffort: "none" },
+      [reasoningModel(["on"], "on")]
+    );
+
+    expect(body["reasoning_effort"]).toBe("none");
+  });
+
+  it("never sends the directive to a model that cannot reason", async () => {
+    // A non-reasoning model has no concept of the field, and a strict server
+    // would reject it.
+    const body = await captureChatBody(provider(), { reasoningEffort: "none" }, [nativeModel()]);
+
+    expect(body).not.toHaveProperty("reasoning_effort");
+  });
+
+  it("stays out of the request when the caller says nothing about reasoning", async () => {
+    const body = await captureChatBody(provider(), {});
+
+    expect(body).not.toHaveProperty("reasoning_effort");
+  });
+
+  it("does not confuse 'low' with 'off'", async () => {
+    // Measured: "low" still exhausted the 512-token budget and returned
+    // nothing, so it must not be translated into the directive.
+    const body = await captureChatBody(provider(), { reasoningEffort: "low" });
+
+    expect(body).not.toHaveProperty("reasoning_effort");
+  });
+
+  it("loads the native listing before a streamed request too", async () => {
+    // `streamChat` shapes its body the same way `chat` does, so it needs the
+    // same per-model metadata. Without this the directive would silently
+    // vanish on the streaming path — the exact bug, reintroduced.
+    const urls: string[] = [];
+    mockFetch.mockImplementation(async (input) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.endsWith("/chat/completions")) {
+        // No readable body: reaching the streaming failure is the assertion,
+        // because it can only be reached after the listing was fetched.
+        return {
+          ok: true,
+          status: 200,
+          body: null,
+          json: async () => ({}),
+          text: async () => "",
+        } as unknown as Response;
+      }
+      return jsonResponse({ models: [reasoningModel(["off", "on"])] });
+    });
+
+    const drain = async () => {
+      for await (const _ of provider().streamChat(
+        [{ role: "user", content: "hi" }],
+        { reasoningEffort: "none" },
+        "qwen/qwen3.5-9b"
+      )) {
+        void _;
+      }
+    };
+
+    await expect(drain()).rejects.toThrow(/Streaming not supported/i);
+    expect(urls.some((u) => u.endsWith("/api/v1/models"))).toBe(true);
+  });
+});
+
+describe("LMStudioProvider — reasoning starvation is reported, not disguised", () => {
+  /** What a starved reasoning model actually returns: 200, no answer. */
+  const starved = {
+    choices: [
+      {
+        message: { content: "", reasoning_content: "Thinking Process: ..." },
+        finish_reason: "length",
+      },
+    ],
+    usage: { completion_tokens: 512, completion_tokens_details: { reasoning_tokens: 512 } },
+  };
+
+  it("throws instead of returning an empty answer", async () => {
+    await expect(
+      captureChatBody(provider(), { maxTokens: 512 }, [reasoningModel(["on"], "on")], starved)
+    ).rejects.toThrow(ReasoningBudgetExhaustedError);
+  });
+
+  it("names the token split so the user can see what happened", async () => {
+    await expect(
+      captureChatBody(provider(), { maxTokens: 512 }, [reasoningModel(["on"], "on")], starved)
+    ).rejects.toThrow(/512 of 512 tokens were internal reasoning/);
+  });
+
+  it("leaves a genuinely empty answer alone", async () => {
+    // No reasoning evidence means this is some other failure. Inventing a
+    // reasoning diagnosis for it would be the same fabricated explanation the
+    // starvation check exists to remove.
+    const empty = {
+      choices: [{ message: { content: "" }, finish_reason: "stop" }],
+      usage: { completion_tokens: 0, completion_tokens_details: { reasoning_tokens: 0 } },
+    };
+
+    const body = await captureChatBody(
+      provider(),
+      { maxTokens: 512 },
+      [reasoningModel(["off", "on"])],
+      empty
+    );
+
+    expect(body["reasoning_effort"]).toBeUndefined();
+  });
+});
+
+describe("LMStudioProvider — request degradation", () => {
+  it("retries without the directive when the server rejects the field", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    let call = 0;
+    mockFetch.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/chat/completions")) {
+        bodies.push(JSON.parse(String(init?.body)));
+        call += 1;
+        if (call === 1) return errorResponse(400, "unknown field: reasoning_effort");
+        return jsonResponse({ choices: [{ message: { content: "{}" }, finish_reason: "stop" }] });
+      }
+      return jsonResponse({ models: [reasoningModel(["off", "on"])] });
+    });
+
+    await provider().chat([{ role: "user", content: "hi" }], { reasoningEffort: "none" }, "qwen/qwen3.5-9b");
+
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]!["reasoning_effort"]).toBe("none");
+    expect(bodies[1]).not.toHaveProperty("reasoning_effort");
+  });
+
+  it("does not blame the reasoning field for an unrelated 400", async () => {
+    mockFetch.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/chat/completions")) return errorResponse(400, "context length exceeded");
+      return jsonResponse({ models: [reasoningModel(["off", "on"])] });
+    });
+
+    await expect(
+      provider().chat([{ role: "user", content: "hi" }], { reasoningEffort: "none" }, "qwen/qwen3.5-9b")
+    ).rejects.toThrow(/context length exceeded/);
+  });
+});
+
+describe("LMStudioProvider — one model resident at a time", () => {
+  /**
+   * LM Studio keeps every loaded model resident until its own idle TTL expires.
+   * The app never released anything, so switching models in the dropdown
+   * stacked them up. Observed live on this machine: with a 9B and a 7B
+   * resident, loading a 12B, a 14B and a 9.4B each failed with HTTP 500, and
+   * two of those attempts took over ten minutes to fail. The user saw "could
+   * not load this model into memory" on every subsequent selection.
+   */
+  function switchingFetch(target: string, other: Record<string, unknown>, unloaded: string[]) {
+    let loaded = false;
+    mockFetch.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/models/unload")) {
+        unloaded.push(JSON.parse(String(init?.body)).instance_id);
+        return jsonResponse({});
+      }
+      if (url.endsWith("/api/v1/models/load")) {
+        loaded = true;
+        return jsonResponse({ status: "loaded", load_time_seconds: 12 });
+      }
+      return jsonResponse({
+        models: [
+          { ...nativeModel({ key: target }), loaded_instances: loaded ? [{ id: target }] : [] },
+          other,
+        ],
+      });
+    });
+  }
+
+  it("releases another resident model before loading the selected one", async () => {
+    const unloaded: string[] = [];
+    switchingFetch(
+      "qwen/qwen3.5-9b",
+      nativeModel({ key: "ibm/granite-4-h-tiny", loaded_instances: [{ id: "granite-instance" }] }),
+      unloaded
+    );
+
+    const result = await provider().loadModel("qwen/qwen3.5-9b");
+
+    expect(result.loaded).toBe(true);
+    expect(unloaded).toEqual(["granite-instance"]);
+  });
+
+  it("never releases the model it is about to load", async () => {
+    const unloaded: string[] = [];
+    switchingFetch(
+      "qwen/qwen3.5-9b",
+      nativeModel({ key: "qwen/qwen3.5-9b", loaded_instances: [{ id: "should-not-be-touched" }] }),
+      unloaded
+    );
+
+    await provider().loadModel("qwen/qwen3.5-9b");
+
+    expect(unloaded).not.toContain("should-not-be-touched");
+  });
+
+  it("skips an entry the server gave no instance id for", async () => {
+    // Unloading by a guessed id could evict the model we are about to load.
+    const unloaded: string[] = [];
+    switchingFetch(
+      "qwen/qwen3.5-9b",
+      nativeModel({ key: "ibm/granite-4-h-tiny", loaded_instances: [{ config: {} }] }),
+      unloaded
+    );
+
+    await provider().loadModel("qwen/qwen3.5-9b");
+
+    expect(unloaded).toEqual([]);
+  });
+
+  it("still loads when releasing the other model fails", async () => {
+    // Making room is best-effort: the load that follows is the authority on
+    // whether there is room, and it must not be aborted by the cleanup.
+    let loaded = false;
+    mockFetch.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/models/unload")) return errorResponse(500, "cannot unload");
+      if (url.endsWith("/api/v1/models/load")) {
+        loaded = true;
+        return jsonResponse({ status: "loaded" });
+      }
+      return jsonResponse({
+        models: [
+          nativeModel({
+            key: "qwen/qwen3.5-9b",
+            loaded_instances: loaded ? [{ id: "qwen" }] : [],
+          }),
+          nativeModel({ key: "ibm/granite-4-h-tiny", loaded_instances: [{ id: "granite" }] }),
+        ],
+      });
+    });
+
+    const result = await provider().loadModel("qwen/qwen3.5-9b");
+
+    expect(result.loaded).toBe(true);
+  });
+
+  it("does not release anything when the model is already resident", async () => {
+    const unloaded: string[] = [];
+    mockFetch.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/models/unload")) {
+        unloaded.push(JSON.parse(String(init?.body)).instance_id);
+        return jsonResponse({});
+      }
+      return jsonResponse({
+        models: [
+          nativeModel({ key: "qwen/qwen3.5-9b", loaded_instances: [{ id: "qwen-instance" }] }),
+          nativeModel({ key: "ibm/granite-4-h-tiny", loaded_instances: [{ id: "granite" }] }),
+        ],
+      });
+    });
+
+    await provider().loadModel("qwen/qwen3.5-9b");
+
+    expect(unloaded).toEqual([]);
+  });
+});
+

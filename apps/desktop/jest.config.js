@@ -1,5 +1,25 @@
 module.exports = {
   testEnvironment: 'jsdom',
+  // Jest's default per-test timeout is 5 s, which is tight for this project for
+  // a reason that has nothing to do with how long a test should take:
+  // `scripts/verify.mjs` runs its seven gates CONCURRENTLY (`Promise.all`), so
+  // `test + coverage` shares the machine with `next build` and the linter. A
+  // jsdom suite that renders a page on its first test pays module transform plus
+  // first-render cost while three other gates are compiling, and that has been
+  // observed to cross 5 s.
+  //
+  // Evidence, not theory: `src/app/library/__tests__/library.test.tsx` timed out
+  // at exactly 5000 ms inside a `verify` run, then passed 3/3 in isolation and
+  // the same gate went green on the next full run. Nothing in the test is slow —
+  // it was starved.
+  //
+  // 15 s is chosen to absorb scheduling jitter while still failing a test that
+  // genuinely hangs. `verify --serial` remains the option for a loaded machine;
+  // this makes the default pipeline stop reporting flakes as failures. Note this
+  // is a scheduling tolerance, NOT a quality bar — do not raise it to make a
+  // slow test pass, and do not confuse it with the coverage floors, which must
+  // never be lowered.
+  testTimeout: 15000,
   setupFilesAfterEnv: ['<rootDir>/jest.setup.tsx'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',

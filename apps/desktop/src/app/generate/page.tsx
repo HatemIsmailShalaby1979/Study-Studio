@@ -11,6 +11,7 @@ import { profileAndValidate } from "@/lib/modelProfiler";
 import { getLesson, loadLibrary, upsertLesson } from "@/lib/libraryStore";
 import { skillInjector, listSkills, bindSkills, bindDefaultSkills } from "@/lib/skills";
 import { aiRuntime } from "@/lib/ai-runtime";
+import { LOCAL_PROVIDER_IDS, ONLINE_PROVIDER_IDS } from "@/lib/ai-runtime/providerIds";
 import { useMetacognitiveObserver } from "@/hooks/useMetacognitive";
 import MetacognitivePulse from "@/components/MetacognitivePulse";
 import { getJourney, addTopicToJourney, buildJourneyContextPrompt, type Journey } from "@/lib/journeys";
@@ -90,12 +91,17 @@ function GenerateContent() {
   // auto-detects any local server (Ollama, LM Studio, vLLM, LocalAI, LiteLLM,
   // FastChat) — not a single hardcoded one. When none is up, or only an online
   // provider is active, we point the user to /settings.
-  const LOCAL_IDS = ["ollama", "lm-studio", "localai", "vllm", "litellm", "fastchat"];
+  //
+  // The list comes from `providerIds.ts` rather than being retyped here: this
+  // file carried its own copy, which is how the Generate page and the runtime
+  // drift apart about what counts as "local". Widened to `string[]` so it can
+  // be used for membership tests against provider ids reported at runtime.
+  const LOCAL_IDS: readonly string[] = LOCAL_PROVIDER_IDS;
   const hasLocalProvider = providerStatuses.some(
     (s) => LOCAL_IDS.includes(s.providerId) && s.available
   );
   const hasOnlineProvider = providerStatuses.some(
-    (s) => ["openai", "openrouter"].includes(s.providerId) && s.available
+    (s) => (ONLINE_PROVIDER_IDS as readonly string[]).includes(s.providerId) && s.available
   );
   const showProviderHint = initialized && (!hasLocalProvider || hasOnlineProvider);
 

@@ -26,9 +26,13 @@ import {
 import { useTopicAudioPipeline } from "@/hooks/useTopicAudioPipeline";
 import { buildTtsText } from "@/lib/tts";
 import { useLessonPersistence } from "@/hooks/useLessonPersistence";
+import { useAIRuntime } from "@/components/AIRuntimeProvider";
 
 export default function LessonPage() {
   const persistence = useLessonPersistence();
+  // Whether the AI runtime can generate at all. The podcast script is a text
+  // generation and is gated on this — not on TTS, which is a separate concern.
+  const { canGenerate } = useAIRuntime();
   const searchParams = useSearchParams();
   const router = useRouter();
   const [lesson, setLesson] = useState<Lesson | null>(null);
@@ -55,6 +59,8 @@ export default function LessonPage() {
   const [podcastError, setPodcastError] = useState("");
   const [exitPending, setExitPending] = useState(false);
   const pendingActionRef = useRef<(() => void) | null>(null);
+  /** Aborts an in-flight podcast *script* generation. */
+  const podcastAbortRef = useRef<AbortController | null>(null);
 
   const pipeline = useTopicAudioPipeline();
   // The load effect below seeds the pipeline once per lesson. It must NOT list
@@ -165,10 +171,20 @@ export default function LessonPage() {
     }
   };
 
+  /**
+   * Generate the two-host podcast SCRIPT.
+   *
+   * This is a text-generation step and nothing else: it produces dialogue,
+   * a glossary and a quiz. Turning that script into audio is a separate,
+   * later action on this tab, and it is the one that needs a local TTS engine.
+   * Keeping the two apart matters — see the button's gating below.
+   */
   const handleGeneratePodcast = async () => {
-    if (!lesson) return;
+    if (!lesson || generatingPodcast) return;
     setGeneratingPodcast(true);
     setPodcastError("");
+    const controller = new AbortController();
+    podcastAbortRef.current = controller;
     try {
       const result = await generatePodcastOnly({
         topic: lesson.inputMode === "topic" ? lesson.inputText : undefined,
@@ -179,6 +195,7 @@ export default function LessonPage() {
         length: lesson.length || "medium",
         voiceGenderA: voiceGenderFor(allVoices, currentVoice),
         voiceGenderB: voiceGenderFor(allVoices, currentVoiceB),
+        signal: controller.signal,
       });
       const updatedLesson = { ...lesson, podcastScript: result.podcastScript };
       setLesson(updatedLesson);
@@ -190,11 +207,28 @@ export default function LessonPage() {
         void persistence.updatePodcastScript(lesson, result.podcastScript);
       }
     } catch (e) {
-      setPodcastError(e instanceof Error ? e.message : "Failed to generate podcast");
+      // A user-initiated cancel is not an error to report.
+      if (controller.signal.aborted) {
+        setPodcastError("");
+      } else {
+        setPodcastError(e instanceof Error ? e.message : "Failed to generate podcast");
+      }
     } finally {
+      podcastAbortRef.current = null;
       setGeneratingPodcast(false);
     }
   };
+
+  /** Stop an in-flight podcast script generation. */
+  const handleCancelPodcast = () => {
+    podcastAbortRef.current?.abort();
+  };
+
+  // Abort an in-flight script generation when the user leaves the page, matching
+  // what lesson generation already does.
+  useEffect(() => {
+    return () => podcastAbortRef.current?.abort();
+  }, []);
 
   // Exit interception: warn before leaving the page when generated audio has
   // not been saved to a user-chosen location yet (browser close/refresh).
@@ -731,34 +765,63 @@ export default function LessonPage() {
                       <span className="text-slate-500 mt-0.5">⚪</span>
                       <div className="flex-1">
                         <p className="text-sm font-medium text-slate-700 dark:text-slate-400">
-                          Text-to-speech unavailable
+                          Audio file unavailable
                         </p>
                         <p className="text-xs text-slate-600/80 dark:text-slate-500/80 mt-0.5">
-                          Audio generation requires a local TTS engine (Piper) installed with voice models,
-                          or a supported browser with speech synthesis. Download a voice model or run the
-                          desktop app to enable audio generation.
+                          The script below still generates normally. Turning it into an MP3/WAV
+                          file needs a local TTS engine (Piper) — download a voice in Settings,
+                          then use the audio panel once the script exists.
                         </p>
                       </div>
                     </div>
                   </div>
                 )}
 
-                <button
-                  onClick={handleGeneratePodcast}
-                  disabled={generatingPodcast || !isTts}
-                  className={`btn px-8 ${isTts ? "btn-primary" : "btn-secondary opacity-50 cursor-not-allowed"}`}
-                >
-                  {generatingPodcast ? (
-                    <span className="flex items-center gap-2">
-                      <span className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
-                      Generating Podcast...
-                    </span>
-                  ) : !isTts ? (
-                    "🔇 TTS unavailable"
-                  ) : (
-                    "✨ Generate Podcast"
+                {/*
+                  The script button is gated on generation being possible at all,
+                  NOT on TTS.
+
+                  It used to be `disabled={generatingPodcast || !isTts}` and
+                  relabelled "🔇 TTS unavailable". Generating the podcast script
+                  is a pure text-generation step — dialogue, glossary, quiz — and
+                  has nothing to do with text-to-speech. On a machine with no
+                  Piper voice installed (the default state of a fresh install)
+                  `isTts` is false, so the button was permanently dead and the
+                  podcast feature was unreachable, with a label that pointed the
+                  user at the wrong subsystem.
+                */}
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={handleGeneratePodcast}
+                    disabled={generatingPodcast || !canGenerate}
+                    className={`btn px-8 ${
+                      canGenerate ? "btn-primary" : "btn-secondary opacity-50 cursor-not-allowed"
+                    }`}
+                  >
+                    {generatingPodcast ? (
+                      <span className="flex items-center gap-2">
+                        <span className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
+                        Generating Podcast...
+                      </span>
+                    ) : canGenerate ? (
+                      "✨ Generate Podcast"
+                    ) : (
+                      "🔌 No AI model available"
+                    )}
+                  </button>
+                  {generatingPodcast && (
+                    <button onClick={handleCancelPodcast} className="btn btn-ghost text-sm">
+                      Cancel
+                    </button>
                   )}
-                </button>
+                </div>
+                {generatingPodcast && (
+                  <p className="text-[11px] text-muted mt-3">
+                    Writing the script chunk by chunk — a two-host podcast is up to a dozen model
+                    calls, so this can take several minutes. Cancel stops it after the current
+                    chunk.
+                  </p>
+                )}
 
                 <div className="flex items-center justify-between py-10 mt-4 border-t border-card-border">
                   <button onClick={() => handleTabChange("lesson")} className="btn btn-ghost text-sm">← Back to Lesson</button>

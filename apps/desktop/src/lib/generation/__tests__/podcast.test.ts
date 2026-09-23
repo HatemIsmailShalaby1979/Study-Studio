@@ -435,3 +435,50 @@ describe("generatePodcastOnly — failure handling", () => {
     });
   });
 });
+
+describe("generatePodcastOnly — cancellation", () => {
+  it("stops between chunks instead of running the whole episode", async () => {
+    // A podcast is up to a dozen sequential model calls. Before this, the only
+    // way out of a slow run was to close the app.
+    const controller = new AbortController();
+    let chunkCalls = 0;
+    mockChatForJson.mockImplementation(async (_model, _messages, schema) => {
+      if (schema === PODCAST_TITLE_JSON_SCHEMA) return { title: "T" };
+      if (schema === PODCAST_CHUNK_JSON_SCHEMA) {
+        chunkCalls += 1;
+        // Abort during the first chunk, as a user pressing Cancel would.
+        controller.abort();
+        return { lines: lines(6) };
+      }
+      if (schema === GLOSSARY_QUIZ_JSON_SCHEMA) return { glossary: glossary(8), quiz: quiz(6) };
+      throw new Error("unexpected");
+    });
+
+    await expect(
+      generatePodcastOnly({ topic: "Rain", signal: controller.signal })
+    ).rejects.toThrow(/cancelled/i);
+
+    // The chunk that was already in flight completed; no further chunk started.
+    expect(chunkCalls).toBe(1);
+  });
+
+  it("reports a cancellation as a cancellation, not as a model failure", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      generatePodcastOnly({ topic: "Rain", signal: controller.signal })
+    ).rejects.toThrow(/Podcast generation cancelled/i);
+  });
+
+  it("passes the signal through to every model call", async () => {
+    const controller = new AbortController();
+
+    await generatePodcastOnly({ topic: "Rain", signal: controller.signal });
+
+    expect(mockChatForJson).toHaveBeenCalled();
+    for (const call of mockChatForJson.mock.calls) {
+      expect(call[4]).toBe(controller.signal);
+    }
+  });
+});

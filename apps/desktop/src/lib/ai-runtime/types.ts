@@ -16,6 +16,24 @@ export interface AIMessage {
 }
 
 /**
+ * How much internal "thinking" a reasoning-capable model should spend before it
+ * answers.
+ *
+ * `"none"` asks the runtime to answer directly. This matters more than a
+ * latency tweak: a reasoning model's thinking tokens are drawn from the SAME
+ * `maxTokens` budget as its answer, so a request with a small cap can be
+ * answered with **no answer at all** — every token spent thinking, `content`
+ * empty, `finish_reason: "length"`. Measured on this machine against
+ * `qwen/qwen3.5-9b` with the app's real 512-token title budget: 512/512 tokens
+ * went to reasoning and `content` was empty. With `"none"` the same request
+ * returned valid JSON in 0 reasoning tokens and 6x faster.
+ *
+ * Providers that cannot express this ignore it; the runtime never assumes it
+ * was honoured. See `AIModelReasoning`.
+ */
+export type AIReasoningEffort = "none" | "low" | "medium" | "high";
+
+/**
  * Provider-agnostic completion options. The runtime maps these onto whatever
  * the concrete provider understands (e.g. Ollama's `options` object vs an
  * OpenAI-compatible `max_tokens`).
@@ -32,6 +50,14 @@ export interface AICompletionOptions {
   numGpu?: number;
   keepAlive?: string;
   /**
+   * Requested reasoning effort. `"none"` means "answer without thinking".
+   * Honoured only by providers that report the model can turn reasoning off —
+   * see {@link AIModel.reasoning}. Never assume it took effect: a model whose
+   * runtime mandates reasoning will still think, and the answer can still be
+   * crowded out of the token budget.
+   */
+  reasoningEffort?: AIReasoningEffort;
+  /**
    * Structured-output JSON Schema. Providers that do not advertise
    * `structuredOutput` ignore it (the runtime falls back to prompt-only +
    * repair). TOP-LEVEL request field, not part of transport options.
@@ -43,6 +69,30 @@ export interface AICompletionOptions {
   toolChoice?: unknown;
   /** Cancellation signal. */
   signal?: AbortSignal;
+}
+
+/**
+ * Reasoning behaviour of a specific model, as reported by its runtime.
+ *
+ * This is per-MODEL metadata, not a provider capability flag: one runtime
+ * routinely serves both reasoning and non-reasoning models, and the decision
+ * that matters ("can I stop this model from thinking, so it spends its token
+ * budget on the answer?") is a property of the model.
+ */
+export interface AIModelReasoning {
+  /** The model can emit internal reasoning tokens. */
+  supported: boolean;
+  /**
+   * The runtime lets reasoning be turned off for this model.
+   *
+   * `false` means reasoning is mandatory: every request will spend part of its
+   * `maxTokens` budget thinking, so a small budget yields an empty answer.
+   * Callers must budget for it rather than assume `reasoningEffort: "none"`
+   * will take effect.
+   */
+  canDisable: boolean;
+  /** What the runtime does when a request says nothing about reasoning. */
+  default: "on" | "off";
 }
 
 /** A model as reported by a provider's model listing. */
@@ -61,6 +111,11 @@ export interface AIModel {
   contextWindow?: number;
   /** Whether the model was trained for tool/function calling, when known. */
   supportsTools?: boolean;
+  /**
+   * Reasoning behaviour, when the runtime reports it. Absent means unknown —
+   * callers must not assume either way.
+   */
+  reasoning?: AIModelReasoning;
 }
 
 /** Rich per-model metadata (parameters, context window, tool support). */
