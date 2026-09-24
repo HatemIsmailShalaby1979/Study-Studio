@@ -1,18 +1,12 @@
 # Study Studio
 
-**A private AI tutor that runs on your machine. Built solo, self-learning, while switching careers — part of the Helix Codex family of honest, local-first tools.**
+> **Status: Working, local-first — 46 test suites and 973 tests passing, 85.5% statement / 74.8% branch coverage (snapshot 2026-09-24). Generation requires a local model runtime. Audio export requires Piper voice files plus ffmpeg. No hosted SaaS. No external audit.**
 
-Type a topic. Get a structured lesson, a dual-host podcast script, a glossary, and a quiz — without sending a word to the cloud. Study Studio is a desktop app for people who want real learning material and would rather not rent an API key to produce it.
+**A component of Helix Codex. A private AI tutor that runs on your machine.**
 
----
+Type a topic. Get a structured lesson, a dual-host podcast script, a glossary, and a quiz, without sending a word to the cloud. Study Studio is a desktop app for people who want real learning material and would rather not rent an API key to produce it.
 
-## Why this exists
-
-I built Study Studio because the alternatives forced a false choice: pay per token for a hosted tutor, or paste prompts into a chat window and hope the output is usable. Neither is a study tool. Both leak your material somewhere, and neither cares whether the lesson is coherent ten minutes later.
-
-Local models changed the math. A laptop with 16 GB of RAM can run a mid-size instruction model well enough to draft lessons, quizzes, and dialogue. What was missing was the product layer — validation, structure, voice, library, audio — so the model’s answer becomes something you can actually learn from.
-
-That product layer is Study Studio. The model stays on your machine. So does the lesson.
+It is not Helix Prime. It is a component: the product layer that turns a local model into study material.
 
 ---
 
@@ -31,8 +25,6 @@ That product layer is Study Studio. The model stays on your machine. So does the
 | Desktop installers (NSIS / MSI / portable) | Built for Windows x64 |
 | Mobile client | **Removed** — the Expo scaffold was unreachable code; a phone’s `localhost` is the phone |
 | Hosted SaaS | **Not offered** — and not planned as a requirement |
-
-**Honest boundary:** generation needs a local model runtime. Audio export needs Piper voice files plus ffmpeg. There is no “it just works with zero setup” claim, because that would be false on a clean machine.
 
 ---
 
@@ -71,18 +63,18 @@ For audio: install Piper voice models **and** ffmpeg. Piper writes the WAV; ffmp
 
 ## Quality, measured
 
-Last full run on this machine (Jest, TypeScript, ESLint):
+Snapshot 2026-09-24. Last full run on this machine (Jest, TypeScript, ESLint):
 
-| Check | Result |
-| --- | --- |
-| Test suites | **46 passed** |
-| Tests | **973 passed** |
-| Coverage (statements / branches) | **85.5% / 74.8%** |
-| Typecheck | Clean |
-| Lint (`--max-warnings 0`) | Clean |
-| Design-token guard | Clean |
-| Version drift guard (4 manifests) | Clean at 0.2.0 |
-| Mutation testing | Blocking in CI (28 targeted mutations) |
+| Check | Result | Snapshot |
+| --- | --- | --- |
+| Test suites | 46 passed | 2026-09-24 |
+| Tests | 973 passed | 2026-09-24 |
+| Coverage (statements / branches) | 85.5% / 74.8% | 2026-09-24 |
+| Typecheck | Clean | 2026-09-24 |
+| Lint (`--max-warnings 0`) | Clean | 2026-09-24 |
+| Design-token guard | Clean | 2026-09-24 |
+| Version drift guard (4 manifests) | Clean at 0.2.0 | 2026-09-24 |
+| Mutation testing | Blocking in CI (28 targeted mutations) | 2026-09-24 |
 
 Live opt-in suites exist for LM Studio and Ollama (`LMSTUDIO_LIVE=1`, `OLLAMA_LIVE=1`). Without those env vars CI stays hermetic.
 
@@ -106,21 +98,64 @@ Details: [`apps/desktop/QA-WORKFLOW.md`](apps/desktop/QA-WORKFLOW.md), [`apps/de
 
 ---
 
-## The founder’s note
+## Honest boundary
 
-Study Studio is built by **Hatem Ismail Shalaby** — operations architect and AI systems engineer — as part of the Helix line of work: [Helix Prime](https://github.com/HatemIsmailShalaby1979/Helix-Prime), [Helix Education](https://github.com/HatemIsmailShalaby1979/Helix-Education), and [L&D Command Center](https://github.com/HatemIsmailShalaby1979/L-D-Command-Center).
+Generation needs a local model runtime. Audio export needs Piper voice files plus ffmpeg. On a clean machine with neither, the app will not produce lessons or audio. The mobile client was removed, and a hosted SaaS is not offered.
 
-It is not a demo repo. It is the learning engine those products would use if they need lessons and podcasts generated offline. That is why the tests are real, the audit is public, and the status section refuses to inflate: a tool that claims more than it does is worse than useless when someone tries to study with it.
-
-The engineering culture is written down in [Constitution 000](constitution.me) and the [Helix Constitution](docs/HELIX_CONSTITUTION.md). Short version: identity before implementation; every capability answers why it exists; documentation outlives the conversation that produced it.
-
-Portfolio: [HatemIsmailShalaby1979](https://github.com/HatemIsmailShalaby1979).
+This is not a production deployment claim. There is no external audit, no certified data isolation, and no signed security review. No revenue has been realised.
 
 ---
 
-## License
+## Related work
+
+- [Helix Prime](https://github.com/HatemIsmailShalaby1979/Helix-Prime) — the operations core
+- [Helix Education](https://github.com/HatemIsmailShalaby1979/Helix-Education) — event-sourced learning engine
+- [L&D Command Center](https://github.com/HatemIsmailShalaby1979/L-D-Command-Center) — desktop learning and career workstation
+- [Blue Waves](https://github.com/HatemIsmailShalaby1979/Blue-Waves-) — content studio
+- [LIVE Support Assistant](https://github.com/HatemIsmailShalaby1979/LIVE-Support-Assistant) — explainable support prototype
+- [Full portfolio](https://github.com/HatemIsmailShalaby1979) — the front door
+
+### The 2026 building attempts
+
+- [WFM Forecasting Calculator](https://github.com/HatemIsmailShalaby1979/wfm-forecasting-calculator)
+- [RTA Command Center](https://github.com/HatemIsmailShalaby1979/RTA_command_center)
+- [CX Sentiment Sentinel](https://github.com/HatemIsmailShalaby1979/cx-sentiment-sentinel)
+- [Dynamic Ops Automation Engine](https://github.com/HatemIsmailShalaby1979/Dynamic-Ops-Automation-Engine)
+
+---
+
+## The founder's story
+
+I spent twenty-eight years in contact-centre operations and workforce management.
+Forecasting, scheduling, adherence, service levels, churn. The same problems
+appeared in every company I worked in, and none of the tools solved them properly.
+
+In April 2026 I left that career and started building full time — alone, and
+teaching myself to write software as I went. The first four tools were published
+six weeks later, in May and June 2026. Each one took a single operational problem
+and solved it properly. They were not impressive. They were correct.
+
+Those four tools converged into one idea: **Helix Codex**, an accountable AI
+operating organization. Not an autonomous agent. An organization with a
+constitution, named roles with bounded authority, evidence trails, and a human at
+every consequential boundary. Helix Prime is its operations core.
+
+Study Studio is a component of Helix Codex. It is maintained by one person, with no team and
+no funding. It has not been externally audited and it has not made revenue. Where
+it is unfinished, this document says so.
+
+The engineering culture behind it is written down in [Constitution 000](constitution.me) and the [Helix Constitution](docs/HELIX_CONSTITUTION.md): identity before implementation; every capability answers why it exists; documentation outlives the conversation that produced it.
+
+## Author
+
+**Hatem Ismail Shalaby** — Operations Architect · AI Systems Engineer · Founder
+
+- GitHub: [HatemIsmailShalaby1979](https://github.com/HatemIsmailShalaby1979)
+- LinkedIn: [hatem-shalaby-202902127](https://www.linkedin.com/in/hatem-shalaby-202902127/)
+- Email: hatemshalaby2025@gmail.com
+
+Based in Al Obour City, Al-Qalyubia Governorate, Egypt.
+
+## Licence
 
 [MIT](LICENSE)
-
-
-
