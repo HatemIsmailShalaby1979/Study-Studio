@@ -261,7 +261,7 @@ describe("AudioFileDownload — voice availability", () => {
     mockListAvailableVoices.mockResolvedValue([]);
 
     await renderPanel({ trackType: "audiobook" });
-    fireEvent.click(screen.getByRole("button", { name: /Lessac/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Lessac/ }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Downloading..." })).toBeDisabled());
 
@@ -284,8 +284,8 @@ describe("AudioFileDownload — voice availability", () => {
     mockListAvailableVoices.mockResolvedValue([]);
     await renderPanel({ trackType: "podcast" });
 
-    expect(screen.getByRole("button", { name: /⬇ Lessac/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /⬇ Amy/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /⬇ Lessac/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /⬇ Amy/ })).toBeInTheDocument();
   });
 });
 

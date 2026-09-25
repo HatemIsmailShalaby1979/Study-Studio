@@ -162,7 +162,7 @@ export function useTopicAudioPipeline() {
       } else {
         dispatch({ type: "CANCEL_DOWNLOADING" });
       }
-    } catch (err) {
+    } catch (_err) {
       dispatch({ type: "CANCEL_DOWNLOADING" });
     }
   }, [state.stage, state.tempAudioPaths, state.topicTitle]);
