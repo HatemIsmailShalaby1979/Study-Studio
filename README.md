@@ -113,7 +113,7 @@ This is not a production deployment claim. There is no external audit, no certif
 - [L&D Command Center](https://github.com/HatemIsmailShalaby1979/L-D-Command-Center) — desktop learning and career workstation
 - [Blue Waves](https://github.com/HatemIsmailShalaby1979/Blue-Waves-) — content studio
 - [LIVE Support Assistant](https://github.com/HatemIsmailShalaby1979/LIVE-Support-Assistant) — explainable support prototype
-- [Full portfolio](https://github.com/HatemIsmailShalaby1979) — the front door
+- [Full portfolio](https://github.com/HatemIsmailShalaby1979) — how this project fits the wider work
 
 ### The 2026 building attempts
 
@@ -123,39 +123,6 @@ This is not a production deployment claim. There is no external audit, no certif
 - [Dynamic Ops Automation Engine](https://github.com/HatemIsmailShalaby1979/Dynamic-Ops-Automation-Engine)
 
 ---
-
-## The founder's story
-
-I spent twenty-eight years in operations. The first fourteen were the
-foundation: ground operations and real-time traffic management at Hurghada
-International Airport, then Air Berlin, where I directed ground operations
-through the 2011 regional transition and held SLA compliance under conditions
-that had no playbook. Alongside that, international logistics at Shorouk
-International Bookshop and hybrid IT operations at Nefertari American School.
-
-The second fourteen were about automation. I built AI-driven automation for
-contact centres at ByteDance, Vodafone and Uber: NLP pipelines that turn
-unstructured customer language into signal, Erlang C forecasting that turns
-volume into staffing, and the reporting layers that made both usable by people
-on the floor. The hard part was never the model. It was the handover — who owns
-the decision, what evidence supports it, and what happens when the system is
-wrong.
-
-In April 2026 I left that career and started building full time — alone, and
-teaching myself to write software as I went. The first four tools were published
-six weeks later, in May and June 2026. Each one took a single operational problem
-and solved it properly. They were not impressive. They were correct.
-
-Those four tools converged into one idea: **Helix Codex**, an accountable AI
-operating organization. Not an autonomous agent. An organization with a
-constitution, named roles with bounded authority, evidence trails, and a human at
-every consequential boundary. Helix Prime is its operations core.
-
-Study Studio is a component of Helix Codex. It is maintained by one person, with no team and
-no funding. It has not been externally audited and it has not made revenue. Where
-it is unfinished, this document says so.
-
-The engineering culture behind it is written down in [Constitution 000](constitution.me) and the [Helix Constitution](docs/HELIX_CONSTITUTION.md): identity before implementation; every capability answers why it exists; documentation outlives the conversation that produced it.
 
 ## Author
 
