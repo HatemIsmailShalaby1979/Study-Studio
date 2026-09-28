@@ -1,14 +1,24 @@
+<div align="center">
+
 # Study Studio
 
-> **Status: Working, local-first — 46 test suites and 973 tests passing, 85.5% statement / 74.8% branch coverage (snapshot 2026-09-24). Generation requires a local model runtime. Audio export requires Piper voice files plus ffmpeg. No hosted SaaS. No external audit.**
+**A private, local-first AI tutor that runs on your machine.**
 
-**A component of Helix Codex. A private AI tutor that runs on your machine.**
+![Status](https://img.shields.io/badge/status-working-blue)
+![Tests](https://img.shields.io/badge/tests-46%20suites%20%2F%20973%20passed-2ea043)
+![Licence](https://img.shields.io/badge/licence-MIT-blue)
+![TypeScript](https://img.shields.io/badge/typescript-app-3178c6)
 
-Type a topic. Get a structured lesson, a dual-host podcast script, a glossary, and a quiz, without sending a word to the cloud. Study Studio is a desktop app for people who want real learning material and would rather not rent an API key to produce it.
+</div>
 
-It is not Helix Prime. It is a component: the product layer that turns a local model into study material.
+## One-line identity
 
----
+Study Studio is a private, local-first AI tutor that turns a topic into a lesson, a
+dual-host podcast script, a glossary, and a quiz — without sending a word to the
+cloud.
+
+> [!NOTE]
+> **Operating principle.** A local model is a tool the user owns, not a service that owns the user. Generation without an internet dependency is the default, not a privacy add-on: the app talks to a model runtime on the same machine, and with neither a model nor ffmpeg installed it simply tells you what is missing rather than reaching for a hosted API.
 
 ## What it does today
 
@@ -23,45 +33,24 @@ It is not Helix Prime. It is a component: the product layer that turns a local m
 | Learning Journey (progress, streaks, quiz scores) | Working |
 | Library in IndexedDB with legacy localStorage migration | Working |
 | Desktop installers (NSIS / MSI / portable) | Built for Windows x64 |
-| Mobile client | **Removed** — the Expo scaffold was unreachable code; a phone’s `localhost` is the phone |
-| Hosted SaaS | **Not offered** — and not planned as a requirement |
+| Mobile client | **Removed** — the Expo scaffold was unreachable code |
+| Hosted SaaS | **Not offered** and not planned as a requirement |
 
----
+## How it fits Helix Codex
 
-## Run it
+Study Studio is a **component** — the product layer that turns a local model into
+study material. It is an **independent repository with no shared codebase** with Helix
+Prime. No data pipeline is wired between it and the core today; it is portfolio-adjacent
+and technically independent.
 
-### Browser (fastest)
+## Architecture
 
-```bash
-cd apps/desktop
-npm install
-npm run dev
-```
+- `apps/desktop` — Tauri shell (Rust) hosting the web client; the Windows installer build target.
+- `apps/web` — React/Next frontend.
+- `src/lib/ai-runtime/` — provider contract, capability detection, model selection (the runtime the coverage gate measures).
+- Library — IndexedDB with a localStorage migration path.
 
-Open http://localhost:3000. In a browser, calls to local runtimes go direct over HTTP, so those servers must allow CORS. The desktop shell does not have that constraint — it routes through Rust.
-
-### Desktop
-
-Requires the [Rust](https://www.rust-lang.org/) toolchain.
-
-```bash
-cd apps/desktop
-npm install
-npm run tauri:dev      # development
-npm run tauri:build    # Windows installer
-```
-
-### Local models
-
-- **[LM Studio](https://lmstudio.ai) — recommended.** Start the server from the Developer tab (port `1234`). Pick a model in Study Studio; the app loads it into memory for you.
-- **[Ollama](https://ollama.com)** — solid alternative (port `11434`). Hybrid thinking models are handled: structured requests explicitly disable thinking so a 512-token title call is not burned on internal reasoning.
-- Any OpenAI-compatible `/v1` endpoint (LocalAI, vLLM, LiteLLM, FastChat).
-
-For audio: install Piper voice models **and** ffmpeg. Piper writes the WAV; ffmpeg encodes the MP3. Both are required for MP3.
-
----
-
-## Quality, measured
+## Production status & test coverage
 
 Snapshot 2026-09-24. Last full run on this machine (Jest, TypeScript, ESLint):
 
@@ -73,38 +62,36 @@ Snapshot 2026-09-24. Last full run on this machine (Jest, TypeScript, ESLint):
 | Typecheck | Clean | 2026-09-24 |
 | Lint (`--max-warnings 0`) | Clean | 2026-09-24 |
 | Design-token guard | Clean | 2026-09-24 |
-| Version drift guard (4 manifests) | Clean at 0.2.0 | 2026-09-24 |
 | Mutation testing | Blocking in CI (28 targeted mutations) | 2026-09-24 |
 
-Live opt-in suites exist for LM Studio and Ollama (`LMSTUDIO_LIVE=1`, `OLLAMA_LIVE=1`). Without those env vars CI stays hermetic.
+> [!WARNING]
+> Live opt-in suites exist for LM Studio and Ollama (`LMSTUDIO_LIVE=1`, `OLLAMA_LIVE=1`); without those env vars CI stays hermetic. Generation needs a local model runtime. Audio export needs Piper voice files plus ffmpeg. On a clean machine with neither, the app will not produce lessons or audio. The mobile client was removed, and a hosted SaaS is not offered. No external audit, no certified data isolation, no signed security review, no revenue.
 
-Details: [`apps/desktop/QA-WORKFLOW.md`](apps/desktop/QA-WORKFLOW.md), [`apps/desktop/AUDIT.md`](apps/desktop/AUDIT.md).
+## Run it
 
----
+### Browser (fastest)
 
-## Documentation
+```bash
+cd apps/desktop
+npm install
+npm run dev
+```
 
-| Document | What it is for |
-| --- | --- |
-| [AI Runtime](docs/AI_RUNTIME.md) | Provider contract, capabilities, how selection works |
-| [Architecture](docs/ARCHITECTURE.md) | Runtime modes, module map, data flow |
-| [Desktop app](apps/desktop/README.md) | Setup, Tauri commands, testing |
-| [Design system](apps/desktop/DESIGN.md) | Tokens, components, known deviations |
-| [Audit](apps/desktop/AUDIT.md) | What was broken, what was fixed, what remains |
-| [QA workflow](apps/desktop/QA-WORKFLOW.md) | Gates, coverage floors, mutation testing |
-| [Offline setup](apps/desktop/docs/OFFLINE_SETUP.md) | Air-gapped install paths |
-| [Contribution](apps/desktop/CONTRIBUTING.md) | How to work in this repo |
-| [Changelog](CHANGELOG.md) | Release notes |
+Open http://localhost:3000. In a browser, calls to local runtimes go direct over HTTP,
+so those servers must allow CORS. The desktop shell routes through Rust and does not
+have that constraint.
 
----
+### Desktop (requires the Rust toolchain)
 
-## Honest boundary
+```bash
+cd apps/desktop
+npm install
+npm run tauri:dev      # development
+npm run tauri:build    # Windows installer
+```
 
-Generation needs a local model runtime. Audio export needs Piper voice files plus ffmpeg. On a clean machine with neither, the app will not produce lessons or audio. The mobile client was removed, and a hosted SaaS is not offered.
-
-This is not a production deployment claim. There is no external audit, no certified data isolation, and no signed security review. No revenue has been realised.
-
----
+For local models, LM Studio (port `1234`) or Ollama (port `11434`). For audio, install
+Piper voice models **and** ffmpeg.
 
 ## Related work
 
@@ -122,8 +109,6 @@ This is not a production deployment claim. There is no external audit, no certif
 - [CX Sentiment Sentinel](https://github.com/HatemIsmailShalaby1979/cx-sentiment-sentinel)
 - [Dynamic Ops Automation Engine](https://github.com/HatemIsmailShalaby1979/Dynamic-Ops-Automation-Engine)
 
----
-
 ## Author
 
 **Hatem Ismail Shalaby** — Operations Architect · AI Systems Engineer · Founder
@@ -137,4 +122,4 @@ Based in Al Obour City, Al-Qalyubia Governorate, Egypt.
 
 ## Licence
 
-[MIT](LICENSE)
+MIT
