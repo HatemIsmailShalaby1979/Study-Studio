@@ -208,13 +208,24 @@ const MUTATIONS = [
     why: "a chunk below two lines is rejected — the invariant the chunk loop is bounded by",
     // Removing this minimum would not fail any test at the moment the chunk
     // loop runs; it would make that loop UNBOUNDED, since the loop no longer
-    // has an iteration counter. So the invariant is asserted directly.
+    // has an iteration counter. So the invariant is asserted directly — against
+    // the schema that owns it, in `validation.test.ts`.
+    //
+    // That target is deliberate, and it is NOT the generator suite. This
+    // mutation used to run `podcast.test.ts`, which drives the chunk loop
+    // before it reaches any boundary assertion: with the minimum gone a
+    // zero-line chunk validates, `script.push(...[])` appends nothing, and the
+    // loop spins in an await-only microtask loop that Jest's timer-based
+    // `testTimeout` cannot interrupt. The worker then exhausts the V8 heap
+    // (~2 GB) and dies by signal. Measured 2026-09-30 on Linux (node 20.20.2,
+    // `--ci --silent --coverage=false`): 37 s to OOM on the old two-file run,
+    // 34 s on `podcast.test.ts` alone, 2 s on `generation.test.ts` alone —
+    // which does not catch this mutation at all. Retargeting to the schema's
+    // own suite makes the check fast, deterministic, and a failed expectation
+    // rather than an exhausted heap.
     find: '  lines: z.array(podcastLineSchema).min(2, "Podcast chunk must have at least 2 dialogue lines"),',
     replace: "  lines: z.array(podcastLineSchema),",
-    tests: [
-      "src/lib/generation/__tests__/podcast.test.ts",
-      "src/lib/__tests__/generation.test.ts",
-    ],
+    tests: ["src/lib/__tests__/validation.test.ts"],
   },
   {
     id: "lmstudio-load-context-only-when-asked",
@@ -409,16 +420,34 @@ function normaliseEol(text) {
 }
 
 function runTests(tests) {
+  const TIMEOUT_MS = 180_000;
   const res = spawnSync(process.execPath, [JEST, "--ci", "--silent", "--coverage=false", ...tests], {
     cwd: ROOT,
     encoding: "utf8",
     env: { ...process.env, CODEBUDDY_SAFE_DELETE_ENABLED: "0" },
-    timeout: 180_000,
+    timeout: TIMEOUT_MS,
   });
-  // Distinguish "could not start" from "started and timed out". Collapsing both
-  // into `status === null` is what disguised the EINVAL above as a timeout.
+
+  // Three outcomes look alike from `status` alone, and conflating them is what
+  // let a heap exhaustion read as a timeout. Verified against Node 20.20.2 and
+  // 22.22.2 by direct probe:
+  //
+  //   timeout fired    -> error.code === "ETIMEDOUT", signal === "SIGTERM", status === null
+  //   killed by signal -> error === undefined,        signal === "SIGKILL", status === null
+  //   normal exit      -> error === undefined,        signal === null,      status === 1
+  //
+  // So `status === null` on its own means "the run never exited", not "the run
+  // timed out". A mutation that drives the suite into an out-of-memory kill
+  // dies by SIGKILL, and reporting that as a timeout names the wrong cause —
+  // which is exactly how the validation-chunk mutation stayed undiagnosed while
+  // the job sat red.
+  if (res.error?.code === "ETIMEDOUT") {
+    return { failure: `test run timed out after ${TIMEOUT_MS / 1000}s` };
+  }
   if (res.error) return { failure: `could not spawn jest (${res.error.code ?? res.error.message})` };
-  if (res.status === null) return { failure: "test run timed out" };
+  if (res.status === null) {
+    return { failure: `jest never exited — killed by ${res.signal ?? "a signal"}` };
+  }
   return { code: res.status };
 }
 

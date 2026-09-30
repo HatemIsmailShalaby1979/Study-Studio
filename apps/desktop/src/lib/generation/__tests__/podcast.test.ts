@@ -7,7 +7,6 @@ import {
   PODCAST_TITLE_JSON_SCHEMA,
   PODCAST_CHUNK_JSON_SCHEMA,
   GLOSSARY_QUIZ_JSON_SCHEMA,
-  validatePodcastChunk,
 } from "@/lib/validation";
 
 // Characterisation tests for the chunked podcast generator.
@@ -327,8 +326,11 @@ describe("generatePodcastOnly — chunked generation", () => {
     // `podcastChunkOutputSchema` requires at least 2 lines per chunk, so the
     // smallest possible chunk still reaches the target in exactly
     // `ceil(target/2)` iterations — one fewer than the bound allowed. The
-    // counter is gone; what replaces it is the validator, so the test below
-    // pins the invariant the loop now depends on.
+    // counter is gone; what replaces it is the validator, and the invariant it
+    // depends on is pinned against that schema in
+    // `src/lib/__tests__/validation.test.ts`. Asserting it in THIS file would
+    // not work: the loop above runs first, so a broken minimum hangs the file
+    // (an exhausted heap) instead of failing it.
     mockChatForJson.mockImplementation(async (_model, _messages, schema) => {
       if (schema === PODCAST_TITLE_JSON_SCHEMA) return { title: "T" };
       if (schema === PODCAST_CHUNK_JSON_SCHEMA) return { lines: lines(2) };
@@ -349,16 +351,6 @@ describe("generatePodcastOnly — chunked generation", () => {
     // allowed size, and the loop stops there of its own accord.
     expect(chunkCalls).toHaveLength(12);
     expect(result.podcastScript).toHaveLength(24);
-  });
-
-  it("rejects a chunk below two lines, which is what bounds the loop", () => {
-    // The invariant the loop above now rests on. With no counter left, a chunk
-    // of zero lines would append nothing, `script.length` would never reach
-    // `target`, and the loop would spin forever. `.min(2)` is what rules that
-    // out, so it is asserted here rather than assumed.
-    expect(() => validatePodcastChunk({ lines: [] })).toThrow(/at least 2/i);
-    expect(() => validatePodcastChunk({ lines: lines(1) })).toThrow(/at least 2/i);
-    expect(validatePodcastChunk({ lines: lines(2) }).lines).toHaveLength(2);
   });
 
   it("retries each phase on the same model", async () => {
