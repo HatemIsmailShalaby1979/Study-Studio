@@ -32,9 +32,17 @@ async function poll(url, ok) {
 }
 
 (async () => {
-  const warmed = await poll(`${BASE}${WARM_PATH}`, (res) =>
-    Number(res.headers.get("content-length")) > 0
-  );
+  // The readiness check must not look at `content-length`. `next dev` compresses
+  // the chunk and answers with `content-encoding: gzip` + `transfer-encoding:
+  // chunked`, so the header is absent — and Node's `fetch` advertises gzip by
+  // default, which is exactly how this script asks. `Number(null) > 0` is false,
+  // so the predicate could never pass and the warm-up always ran the full two
+  // minutes before warning that it had timed out. Measured on 2026-09-30 against
+  // both bundlers: 200, `content-encoding: gzip`, `content-length: null` under
+  // webpack AND Turbopack. Reading the body keeps the original guarantee — the
+  // chunk is compiled and has real content — without depending on a header that
+  // compression removes.
+  const warmed = await poll(`${BASE}${WARM_PATH}`, async (res) => (await res.text()).length > 0);
   if (warmed) {
     console.log("[dev] layout chunk warm — opening app window");
     await poll(BASE);
