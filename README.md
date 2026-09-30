@@ -4,8 +4,7 @@
 
 **A private, local-first AI tutor that runs on your machine.**
 
-![Status](https://img.shields.io/badge/status-working-blue)
-![Tests](https://img.shields.io/badge/tests-46%20suites%20%2F%20973%20passed-2ea043)
+[![CI](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/workflows/ci.yml)
 ![Licence](https://img.shields.io/badge/licence-MIT-blue)
 ![TypeScript](https://img.shields.io/badge/typescript-app-3178c6)
 
@@ -52,17 +51,35 @@ and technically independent.
 
 ## Production status & test coverage
 
-Snapshot 2026-09-24. Last full run on this machine (Jest, TypeScript, ESLint):
+Snapshot 2026-09-30. Re-measured on this machine — Jest with coverage, TypeScript,
+ESLint, the version-manifest check, the static export and the design-token guard
+(Node 22.22.2 / npm 11.13.0, Windows x64):
 
 | Check | Result | Snapshot |
 | --- | --- | --- |
-| Test suites | 46 passed | 2026-09-24 |
-| Tests | 973 passed | 2026-09-24 |
-| Coverage (statements / branches) | 85.5% / 74.8% | 2026-09-24 |
-| Typecheck | Clean | 2026-09-24 |
-| Lint (`--max-warnings 0`) | Clean | 2026-09-24 |
-| Design-token guard | Clean | 2026-09-24 |
-| Mutation testing | Blocking in CI (28 targeted mutations) | 2026-09-24 |
+| Test suites | 46 passed / 46 total | 2026-09-30 |
+| Tests | 973 passed / 973 total | 2026-09-30 |
+| Coverage (statements / branches) | 85.48% / 75.06% | 2026-09-30 |
+| Typecheck (`tsc --noEmit`) | Clean | 2026-09-30 |
+| Lint (`eslint src --max-warnings 0`) | Clean | 2026-09-30 |
+| Version manifests | Clean — 4 manifests agree at 0.2.0 | 2026-09-30 |
+| Design-token guard | Clean — 20 token utilities, 1 stylesheet | 2026-09-30 |
+| Static export (`next build --webpack`) | Clean — 7 routes, all prerendered | 2026-09-30 |
+| Coverage floors (`check:coverage`) | **Not met** — `src/lib/ai-runtime/runtime.ts` lines 94.63% < 95% floor | 2026-09-30 |
+| Mutation testing (28 targeted mutations) | Harness present and blocking in CI; 28/28 caught when driven in-process here; the CI job is red | 2026-09-30 |
+
+> [!IMPORTANT]
+> **CI is red on `main`.** The newest run for the current head (`dbc370a`, 2026-09-28)
+> passes the `typecheck, lint, versions` and `static export and design tokens` jobs, and
+> fails two: `tests and coverage floors` (at the `runtime.ts` line floor above) and
+> `mutation testing`. The table is a **local re-measurement, not a CI result**; the two are
+> reported side by side rather than reconciled. The `runtime.ts` shortfall was already
+> recorded as known and unclaimed in the `153e22c` commit message, which also declined to
+> lower the floor — this snapshot reproduces it at 94.63% lines. The `mutation testing`
+> failure is **not** reproduced locally: all 28 mutations are caught when the harness's own
+> table is driven in-process, but the harness itself cannot start here (this environment
+> blocks nested process creation), and the CI job log needs repository-admin access. The
+> cause is therefore unresolved, not explained.
 
 > [!WARNING]
 > Live opt-in suites exist for LM Studio and Ollama (`LMSTUDIO_LIVE=1`, `OLLAMA_LIVE=1`); without those env vars CI stays hermetic. Generation needs a local model runtime. Audio export needs Piper voice files plus ffmpeg. On a clean machine with neither, the app will not produce lessons or audio. The mobile client was removed, and a hosted SaaS is not offered. No external audit, no certified data isolation, no signed security review, no revenue.
