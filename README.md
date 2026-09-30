@@ -19,6 +19,27 @@ cloud.
 > [!NOTE]
 > **Operating principle.** A local model is a tool the user owns, not a service that owns the user. Generation without an internet dependency is the default, not a privacy add-on: the app talks to a model runtime on the same machine, and with neither a model nor ffmpeg installed it simply tells you what is missing rather than reaching for a hosted API.
 
+## Screenshots
+
+Captured 2026-09-30 from the production static export (`apps/desktop/out`) served locally,
+in a fresh browser profile with **no model runtime running** — so these are the states a
+first launch actually shows. No fixtures and no seeded data.
+
+| Library | Journeys |
+| --- | --- |
+| ![Library, showing the two tracked featured lessons](docs/img/library.png) | ![Journeys, empty state](docs/img/journey.png) |
+
+**Settings** — provider status, the active provider, and the voice catalogue:
+
+![Settings](docs/img/settings.png)
+
+<!-- TODO: lesson and quiz screenshots are still missing. Both need a generated
+     lesson, which needs a local model runtime, and none was reachable on the machine
+     this was captured on — LM Studio's home directory is gone, and Ollama is
+     installed but has no models and is not running. Add docs/img/lesson.png and
+     docs/img/quiz.png above when a model is available or the owner supplies the
+     images. Do not fill the gap with mock or fixture data. -->
+
 ## What it does today
 
 | Capability | Status |
