@@ -75,6 +75,24 @@ if (typeof window !== 'undefined') {
       onvoiceschanged: null
     }
   });
+
+  // testing-library's async utilities (`findBy*`, `waitFor`) give up after
+  // 1000 ms, and that timer is NOT jest's `testTimeout` — raising the latter in
+  // jest.config.js does not touch it. So the starvation tolerance documented
+  // there never covered the assertions that actually need it.
+  //
+  // Evidence, not theory: `Quiz.test.tsx › surfaces an evaluation error instead
+  // of failing silently` failed with "Unable to find an element with the text
+  // /Runtime unreachable/i" in 1 of 3 full-suite runs on an otherwise idle
+  // machine, and passed 3/3 when the file was run alone. The rejection it waits
+  // on is a `mockRejectedValue` — immediate, nothing slow about it — so the
+  // only variable is scheduling.
+  //
+  // Same caveat as `testTimeout`: a scheduling tolerance, NOT a quality bar.
+  // The assertion still fails if the message never renders. Do not raise this
+  // again to make a slow assertion pass — fix the assertion.
+  const { configure } = require('@testing-library/react') as typeof import('@testing-library/react');
+  configure({ asyncUtilTimeout: 5000 });
 }
 
 jest.mock('next/navigation', () => ({
