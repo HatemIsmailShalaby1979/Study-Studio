@@ -131,19 +131,8 @@ Piper voice models **and** ffmpeg.
 
 ## Related work
 
-- [Helix Prime](https://github.com/HatemIsmailShalaby1979/Helix-Prime) — the operations core
-- [Helix Education](https://github.com/HatemIsmailShalaby1979/Helix-Education) — event-sourced learning engine
-- [L&D Command Center](https://github.com/HatemIsmailShalaby1979/L-D-Command-Center) — desktop learning and career workstation
-- [Blue Waves](https://github.com/HatemIsmailShalaby1979/Blue-Waves-) — content studio
-- [LIVE Support Assistant](https://github.com/HatemIsmailShalaby1979/LIVE-Support-Assistant) — explainable support prototype
-- [Full portfolio](https://github.com/HatemIsmailShalaby1979) — how this project fits the wider work
-
-### The 2026 building attempts
-
-- [WFM Forecasting Calculator](https://github.com/HatemIsmailShalaby1979/wfm-forecasting-calculator)
-- [RTA Command Center](https://github.com/HatemIsmailShalaby1979/RTA_command_center)
-- [CX Sentiment Sentinel](https://github.com/HatemIsmailShalaby1979/cx-sentiment-sentinel)
-- [Dynamic Ops Automation Engine](https://github.com/HatemIsmailShalaby1979/Dynamic-Ops-Automation-Engine)
+See the [profile README](https://github.com/HatemIsmailShalaby1979) for how this project
+fits the wider work.
 
 ## Author
 
