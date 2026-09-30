@@ -411,6 +411,24 @@ describe("AIRuntime — health", () => {
     expect(a.health).toHaveBeenCalledTimes(1);
   });
 
+  it("drops the cached snapshot on invalidateHealth so the next read re-probes", async () => {
+    // The cache exists to make repeated reads cheap, not to make "Re-scan" a
+    // no-op. An explicit invalidate must force a real probe — that is the one
+    // moment the user is asking the app to look again, and answering it from
+    // the cache is indistinguishable from a broken button.
+    const a = makeProvider("a");
+    const runtime = runtimeWith(a);
+
+    await runtime.healthOf("a");
+    await runtime.healthOf("a");
+    expect(a.health).toHaveBeenCalledTimes(1);
+
+    runtime.invalidateHealth();
+    await runtime.healthOf("a");
+
+    expect(a.health).toHaveBeenCalledTimes(2);
+  });
+
   it("reports offline instead of throwing when a health check fails", async () => {
     const p = makeProvider("a", ["chat"], {
       health: jest.fn().mockRejectedValue(new Error("down")),
@@ -559,6 +577,22 @@ describe("AIRuntime — models", () => {
 
     await expect(runtime.ensureModel()).resolves.toBe("chosen");
     expect(runtime.session.getModel()).toBe("chosen");
+  });
+
+  it("re-pins the session when an explicit model is requested", async () => {
+    // An explicit selection is intent, so it must override a different pin —
+    // and the pin records what the provider RESOLVED, not what was asked for,
+    // because the provider is allowed to substitute an equivalent it has.
+    const a = makeProvider("a", ["chat"], {
+      ensureModel: jest.fn().mockResolvedValue("resolved-from-request"),
+    });
+    const runtime = runtimeWith(a);
+    runtime.session.setModel("previously-pinned");
+
+    await expect(runtime.ensureModel("requested")).resolves.toBe("resolved-from-request");
+
+    expect(a.ensureModel).toHaveBeenCalledWith("requested");
+    expect(runtime.session.getModel()).toBe("resolved-from-request");
   });
 
   it("throws when ensuring a model on an unknown provider", async () => {
@@ -723,5 +757,60 @@ describe("AIRuntime — ensureModelLoaded", () => {
     const result = await runtimeWith(provider).ensureModelLoaded(undefined, "a");
 
     expect(result.loaded).toBe(true);
+  });
+
+  it("re-pins the session when an explicit model is requested", async () => {
+    // Same pin policy as ensureModel: an explicit request re-pins, and the pin
+    // holds the resolved model rather than the requested one.
+    const provider = makeProvider("a", ["chat"], {
+      loadModel: jest.fn(),
+      ensureModel: jest.fn().mockResolvedValue("resolved-from-request"),
+    });
+    const runtime = runtimeWith(provider);
+    runtime.session.setModel("previously-pinned");
+
+    const result = await runtime.ensureModelLoaded("requested", "a");
+
+    expect(provider.ensureModel).toHaveBeenCalledWith("requested");
+    expect(result.model).toBe("resolved-from-request");
+    expect(runtime.session.getModel()).toBe("resolved-from-request");
+  });
+
+  it("falls back to the provider's own choice when the pinned model no longer resolves", async () => {
+    // A pin is a preference, not a guarantee — the model can be deleted from
+    // the runtime between sessions. The call must degrade to the provider's
+    // choice instead of failing, and the session must end up holding whatever
+    // actually ran, not the pin that is gone.
+    const ensureModel = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("model not installed"))
+      .mockResolvedValueOnce("provider-choice");
+    const provider = makeProvider("a", ["chat"], { ensureModel, loadModel: jest.fn() });
+    const runtime = runtimeWith(provider);
+    runtime.session.setModel("deleted-model");
+
+    const result = await runtime.ensureModelLoaded(undefined, "a");
+
+    expect(ensureModel).toHaveBeenNthCalledWith(1, "deleted-model");
+    expect(ensureModel).toHaveBeenNthCalledWith(2, undefined);
+    expect(result.model).toBe("provider-choice");
+    expect(runtime.session.getModel()).toBe("provider-choice");
+  });
+
+  it("treats a residency probe that throws as 'cannot tell', not as 'not loaded'", async () => {
+    // `undefined` and `false` are different answers. A provider that cannot
+    // report residency must not be reported to the user as a failed load — that
+    // is the mirror of the constant-`true` bug, and it would send the user
+    // hunting for a smaller model they do not need.
+    const provider = makeProvider("a", ["chat"], {
+      loadModel: jest.fn(),
+      ensureModel: jest.fn().mockResolvedValue("m"),
+      isModelLoaded: jest.fn().mockRejectedValue(new Error("probe unavailable")),
+    });
+
+    const result = await runtimeWith(provider).ensureModelLoaded(undefined, "a");
+
+    expect(result.loaded).toBe(true);
+    expect(result.message).toBeUndefined();
   });
 });
