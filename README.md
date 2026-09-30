@@ -44,9 +44,12 @@ and technically independent.
 
 ## Architecture
 
-- `apps/desktop` — Tauri shell (Rust) hosting the web client; the Windows installer build target.
-- `apps/web` — React/Next frontend.
-- `src/lib/ai-runtime/` — provider contract, capability detection, model selection (the runtime the coverage gate measures).
+- `apps/desktop` — the whole application, and the only app package: a Next.js client
+  (`src/app`, `src/components`, `src/hooks`, `src/lib`) inside a Tauri 2 shell
+  (`src-tauri`, Rust). The Windows installer build target. There is no `apps/web` — the
+  frontend is not a separate package.
+- `apps/desktop/src/lib/ai-runtime/` — provider contract, capability detection, model
+  selection (the runtime the coverage gate measures).
 - Library — IndexedDB with a localStorage migration path.
 
 ## Production status & test coverage
@@ -86,6 +89,9 @@ ESLint, the version-manifest check, the static export and the design-token guard
 
 ## Run it
 
+Verified on a clean clone on 2026-09-30: `git clone` → `npm install` → `npm run dev`
+serves the app on http://localhost:3000.
+
 ### Browser (fastest)
 
 ```bash
@@ -94,9 +100,19 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. In a browser, calls to local runtimes go direct over HTTP,
-so those servers must allow CORS. The desktop shell routes through Rust and does not
-have that constraint.
+Open http://localhost:3000. The app sets `trailingSlash: true`, so routes resolve with a
+trailing slash — `/generate/`, `/library/`, `/settings/`; the unslashed form returns a
+redirect.
+
+> [!NOTE]
+> Next 16 enables Turbopack by default, and Turbopack conflicts with this project's
+> `experimental.webpackBuildWorker` (injected by the `@next/bundle-analyzer` wrapper). Every
+> Next script therefore passes `--webpack` explicitly — `dev`, `dev:host`, `build` and
+> `build:prod`. Without the flag `npm run dev` exits before it serves anything, with
+> *"This build is using Turbopack, with a `webpack` config and no `turbopack` config"*.
+
+In a browser, calls to local runtimes go direct over HTTP, so those servers must allow
+CORS. The desktop shell routes through Rust and does not have that constraint.
 
 ### Desktop (requires the Rust toolchain)
 
@@ -106,6 +122,9 @@ npm install
 npm run tauri:dev      # development
 npm run tauri:build    # Windows installer
 ```
+
+`npm run tauri:dev` starts the dev server through `scripts/dev-warm.mjs`, which shells out
+to `npm run dev` — so it inherits the `--webpack` requirement above.
 
 For local models, LM Studio (port `1234`) or Ollama (port `11434`). For audio, install
 Piper voice models **and** ffmpeg.

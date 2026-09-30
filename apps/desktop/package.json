@@ -3,8 +3,8 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "dev:host": "next dev -H 0.0.0.0",
+    "dev": "next dev --webpack",
+    "dev:host": "next dev --webpack -H 0.0.0.0",
     "dev:warm": "node scripts/dev-warm.mjs",
     "build": "next build --webpack",
     "build:prod": "next build --webpack",
