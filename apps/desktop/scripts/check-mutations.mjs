@@ -36,11 +36,13 @@
 // WHY NOT STRYKER
 //
 // Stryker mutates everything, which needs a full-suite run per mutant and tens
-// of minutes. This harness is the opposite trade: ~12 hand-picked mutations on
-// the behaviours that were explicitly pinned during the audit, each running one
-// focused test file. It finishes in well under a minute and is honest about
-// being a sample, not a proof — it answers "are the pinned behaviours really
-// pinned?", not "is the suite 100% mutant-complete".
+// of minutes. This harness is the opposite trade: 28 hand-picked mutations
+// across 13 source files — the `MUTATIONS` table below is the authority, and a
+// run prints the count it actually used — on the behaviours that were
+// explicitly pinned during the audit, each running one focused test file. It
+// finishes in well under a minute and is honest about being a sample, not a
+// proof: it answers "are the pinned behaviours really pinned?", not "is the
+// suite 100% mutant-complete".
 //
 // USAGE
 //
@@ -325,8 +327,8 @@ const MUTATIONS = [
 // refuses to spawn a `.cmd` without `shell: true` (the CVE-2024-27980
 // hardening), so `spawnSync` returned `status: null` with `error.code: EINVAL`
 // for every mutation. The harness interpreted `status === null` as "timed out",
-// mutated 14 source files, ran zero tests, restored them, and reported that it
-// could not evaluate anything — all in 5 seconds. Going through
+// mutated every file in the table, ran zero tests, restored them, and reported
+// that it could not evaluate anything — all in 5 seconds. Going through
 // `process.execPath` + the Jest entry point needs no shell and behaves the same
 // on Windows and Linux.
 const JEST = join(ROOT, "node_modules", "jest", "bin", "jest.js");
@@ -378,9 +380,9 @@ function assertClean(files) {
 /**
  * Preflight. The harness WRITES to source files, so it must not start unless it
  * can actually run the tests that are supposed to catch the mutation. Without
- * this, a broken Jest invocation rewrites 14 files, evaluates nothing, and
- * reports an unhelpful "could not be evaluated" for each — which is exactly what
- * happened on this script's first ever run.
+ * this, a broken Jest invocation rewrites every file in the table, evaluates
+ * nothing, and reports an unhelpful "could not be evaluated" for each — which
+ * is exactly what happened on this script's first ever run.
  */
 function assertJestRunnable() {
   const res = spawnSync(process.execPath, [JEST, "--version"], { cwd: ROOT, encoding: "utf8" });
