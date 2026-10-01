@@ -21,9 +21,10 @@ cloud.
 
 ## Screenshots
 
-Captured 2026-09-30 from the production static export (`apps/desktop/out`) served locally,
-in a fresh browser profile with **no model runtime running** — so these are the states a
-first launch actually shows. No fixtures and no seeded data.
+Captured from the production static export (`apps/desktop/out`) served locally, in a fresh
+browser profile: Library, Journeys and Settings on 2026-09-30, Lesson and Quiz on 2026-10-01.
+No model runtime was running for any of them — the lesson and quiz are the app's own bundled
+featured lesson, which the Library imports on first launch. No fixtures and no seeded data.
 
 | Library | Journeys |
 | --- | --- |
@@ -33,12 +34,13 @@ first launch actually shows. No fixtures and no seeded data.
 
 ![Settings](docs/img/settings.png)
 
-<!-- TODO: lesson and quiz screenshots are still missing. Both need a generated
-     lesson, which needs a local model runtime, and none was reachable on the machine
-     this was captured on — LM Studio's home directory is gone, and Ollama is
-     installed but has no models and is not running. Add docs/img/lesson.png and
-     docs/img/quiz.png above when a model is available or the owner supplies the
-     images. Do not fill the gap with mock or fixture data. -->
+**Lesson** — the bundled featured lesson, opened from the Library:
+
+![Lesson](docs/img/lesson.png)
+
+**Quiz** — the same lesson's quiz, expanded:
+
+![Quiz](docs/img/quiz.png)
 
 ## What it does today
 
