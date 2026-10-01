@@ -36,8 +36,12 @@
 name: CI
 
 on:
+  # Every branch push, not only `main`. A workflow limited to `main` cannot be
+  # exercised on a topic branch at all: pushing a throwaway branch produced zero
+  # runs (verified 2026-10-01). Running on every push makes a branch verifiable
+  # before it reaches `main`, which is the point of having CI.
   push:
-    branches: ["main"]
+  # PRs stay gated to `main` — this project does not open PRs against other bases.
   pull_request:
     branches: ["main"]
 
