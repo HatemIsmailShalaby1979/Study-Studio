@@ -77,35 +77,44 @@ and technically independent.
 
 ## Production status & test coverage
 
-Snapshot 2026-09-30. Re-measured on this machine — Jest with coverage, TypeScript,
-ESLint, the version-manifest check, the static export and the design-token guard
-(Node 22.22.2 / npm 11.13.0, Windows x64):
+Snapshot 2026-10-01. Locally re-measured (Jest with coverage, the version-manifest
+check, the static export and the design-token guard on Node 22.22.2 / npm 11.13.0,
+Windows x64) and cross-checked against CI run
+[`36799900588`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36799900588):
 
-| Check | Result | Snapshot |
+| Check | Result | Source |
 | --- | --- | --- |
-| Test suites | 46 passed / 46 total | 2026-09-30 |
-| Tests | 973 passed / 973 total | 2026-09-30 |
-| Coverage (statements / branches) | 85.48% / 75.06% | 2026-09-30 |
-| Typecheck (`tsc --noEmit`) | Clean | 2026-09-30 |
-| Lint (`eslint src --max-warnings 0`) | Clean | 2026-09-30 |
-| Version manifests | Clean — 4 manifests agree at 0.2.0 | 2026-09-30 |
-| Design-token guard | Clean — 20 token utilities, 1 stylesheet | 2026-09-30 |
-| Static export (`next build --webpack`) | Clean — 7 routes, all prerendered | 2026-09-30 |
-| Coverage floors (`check:coverage`) | **Not met** — `src/lib/ai-runtime/runtime.ts` lines 94.63% < 95% floor | 2026-09-30 |
-| Mutation testing (28 targeted mutations) | Harness present and blocking in CI; 28/28 caught when driven in-process here; the CI job is red | 2026-09-30 |
+| Test suites | 47 passed / 47 total | local, 2026-10-01 |
+| Tests | 986 passed / 986 total | local, 2026-10-01 |
+| Coverage (statements / branches) | 85.71% / 75.13% | local, 2026-10-01 |
+| Typecheck (`tsc --noEmit`) | Clean | CI, 2026-10-01 |
+| Lint (`eslint src --max-warnings 0`) | Clean | CI, 2026-10-01 |
+| Version manifests | Clean — 4 manifests agree at 0.2.0 | local + CI, 2026-10-01 |
+| Design-token guard | Clean — 20 token utilities, 1 stylesheet | local + CI, 2026-10-01 |
+| Static export (`next build --webpack`) | Clean — 7 routes, all prerendered | local + CI, 2026-10-01 |
+| Coverage floors (`check:coverage`) | Met — `src/lib/ai-runtime/runtime.ts` at 100% lines | local + CI, 2026-10-01 |
+| Mutation testing (28 targeted mutations) | 28/28 caught | CI, 2026-10-01 |
 
 > [!IMPORTANT]
-> **CI is red on `main`.** The newest run for the current head (`dbc370a`, 2026-09-28)
-> passes the `typecheck, lint, versions` and `static export and design tokens` jobs, and
-> fails two: `tests and coverage floors` (at the `runtime.ts` line floor above) and
-> `mutation testing`. The table is a **local re-measurement, not a CI result**; the two are
-> reported side by side rather than reconciled. The `runtime.ts` shortfall was already
-> recorded as known and unclaimed in the `153e22c` commit message, which also declined to
-> lower the floor — this snapshot reproduces it at 94.63% lines. The `mutation testing`
-> failure is **not** reproduced locally: all 28 mutations are caught when the harness's own
-> table is driven in-process, but the harness itself cannot start here (this environment
-> blocks nested process creation), and the CI job log needs repository-admin access. The
-> cause is therefore unresolved, not explained.
+> **CI is green on the current tree; `main` has not received it yet.** All four jobs passed on
+> run [`36799900588`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36799900588)
+> (2026-10-01, head `509908b`, branch `ci-verify-2026-10-01`, event `push`):
+> `typecheck, lint, versions`; `tests and coverage floors`; `static export and design tokens`;
+> and `mutation testing`. This is the first fully green run in the repository's history.
+>
+> The two jobs that had been red were fixed rather than muted. `Coverage floors` failed on
+> `runtime.ts` at 94.63% lines against a 95% floor, and is closed with five behavioural tests
+> — the floor is unchanged and no `istanbul-ignore` was added. `mutation testing` failed
+> because one mutation, `validation-chunk-minimum-lines-removed`, drove its target suite into
+> an await-only microtask loop that Jest's timer-based `testTimeout` cannot interrupt: the
+> worker exhausted the V8 heap and died by SIGKILL, which the harness reported as a timeout.
+> It was retargeted at the schema's own suite (`validation.test.ts`), where it fails fast and
+> deterministically. No floor was lowered and no mutation was deleted.
+>
+> The run above was on a verification branch, **not** `main`. `main` is still at `dbc370a`
+> (2026-09-28), whose last run failed at *Coverage floors* and *Mutation testing* — and the
+> badge at the top of this file tracks `main`, so it renders failing until these commits
+> reach it.
 
 > [!WARNING]
 > Live opt-in suites exist for LM Studio and Ollama (`LMSTUDIO_LIVE=1`, `OLLAMA_LIVE=1`); without those env vars CI stays hermetic. Generation needs a local model runtime. Audio export needs Piper voice files plus ffmpeg. On a clean machine with neither, the app will not produce lessons or audio. The mobile client was removed, and a hosted SaaS is not offered. No external audit, no certified data isolation, no signed security review, no revenue.
@@ -128,11 +137,14 @@ trailing slash — `/generate/`, `/library/`, `/settings/`; the unslashed form r
 redirect.
 
 > [!NOTE]
-> Next 16 enables Turbopack by default, and Turbopack conflicts with this project's
-> `experimental.webpackBuildWorker` (injected by the `@next/bundle-analyzer` wrapper). Every
-> Next script therefore passes `--webpack` explicitly — `dev`, `dev:host`, `build` and
-> `build:prod`. Without the flag `npm run dev` exits before it serves anything, with
-> *"This build is using Turbopack, with a `webpack` config and no `turbopack` config"*.
+> **Bundler policy: `dev` is Turbopack, `build` is webpack.** `dev` and `dev:host` pass no
+> flag; `build` and `build:prod` pass `--webpack`, and that flag is not redundant —
+> Turbopack's static export emits no `out/_next/static/css/`, so the design-token guard fails
+> with *"no compiled stylesheet found"* (measured both ways). The Turbopack conflict that
+> once forced `--webpack` everywhere was a version mismatch, not a Next limitation:
+> `@next/bundle-analyzer` was pinned `^14.2.35` against Next `^16.3.6`, and 14.x injects a
+> `webpack` config unconditionally, which Turbopack refuses. The analyzer is now on 16.x and
+> `next dev` runs clean.
 
 In a browser, calls to local runtimes go direct over HTTP, so those servers must allow
 CORS. The desktop shell routes through Rust and does not have that constraint.
@@ -147,7 +159,7 @@ npm run tauri:build    # Windows installer
 ```
 
 `npm run tauri:dev` starts the dev server through `scripts/dev-warm.mjs`, which shells out
-to `npm run dev` — so it inherits the `--webpack` requirement above.
+to `npm run dev` — so it inherits the Turbopack policy above.
 
 For local models, LM Studio (port `1234`) or Ollama (port `11434`). For audio, install
 Piper voice models **and** ffmpeg.
