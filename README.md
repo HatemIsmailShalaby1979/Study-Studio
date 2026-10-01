@@ -77,30 +77,31 @@ and technically independent.
 
 ## Production status & test coverage
 
-Snapshot 2026-10-01. Locally re-measured (Jest with coverage, the version-manifest
-check, the static export and the design-token guard on Node 22.22.2 / npm 11.13.0,
-Windows x64) and cross-checked against CI run
-[`36803350157`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803350157):
+Snapshot 2026-10-01. The latest CI run on `main` is
+[`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646),
+head `88ade450689cd377ec9d90d358787bff269d070b`. The test counts, coverage, and
+workflow results below are from that run's job logs; the latest full local measurement
+was also recorded on 2026-10-01:
 
 | Check | Result | Source |
 | --- | --- | --- |
-| Test suites | 47 passed / 47 total | local, 2026-10-01 |
-| Tests | 986 passed / 986 total | local, 2026-10-01 |
-| Coverage (statements / branches) | 85.71% / 75.13% | local, 2026-10-01 |
-| Typecheck (`tsc --noEmit`) | Clean | CI, 2026-10-01 |
-| Lint (`eslint src --max-warnings 0`) | Clean | CI, 2026-10-01 |
-| Version manifests | Clean — 4 manifests agree at 0.2.0 | local + CI, 2026-10-01 |
-| Design-token guard | Clean — 20 token utilities, 1 stylesheet | local + CI, 2026-10-01 |
-| Static export (`next build --webpack`) | Clean — 7 routes, all prerendered | local + CI, 2026-10-01 |
-| Coverage floors (`check:coverage`) | Met — `src/lib/ai-runtime/runtime.ts` at 100% lines | local + CI, 2026-10-01 |
-| Mutation testing (28 targeted mutations) | 28/28 caught | CI, 2026-10-01 |
+| Test suites | 47 passed / 47 total | CI run [`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646), 2026-10-01 |
+| Tests | 986 passed / 986 total | CI run [`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646), 2026-10-01 |
+| Coverage (statements / branches) | 85.66% / 75.13% | CI run [`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646), 2026-10-01 |
+| Typecheck (`tsc --noEmit`) | Clean | CI run [`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646), 2026-10-01 |
+| Lint (`eslint src --max-warnings 0`) | Clean | CI run [`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646), 2026-10-01 |
+| Version manifests | Clean — 4 manifests agree at 0.2.0 | CI run [`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646), 2026-10-01 |
+| Design-token guard | Clean — 20 token utilities, 1 stylesheet | CI run [`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646), 2026-10-01 |
+| Static export (`next build --webpack`) | Clean — 7 routes, all prerendered | CI run [`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646), 2026-10-01 |
+| Coverage floors (`check:coverage`) | Met — `src/lib/ai-runtime/runtime.ts` at 100% lines | CI run [`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646), 2026-10-01 |
+| Mutation testing (28 targeted mutations) | 28/28 caught | CI run [`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646), 2026-10-01 |
 
 > [!IMPORTANT]
-> **CI is green on `main`.** All four jobs passed on
-> run [`36803350157`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803350157)
-> (2026-10-01, head `2947dfc`, branch `main`, event `push`):
+> **CI is green on `main`.** The latest run is
+> [`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646)
+> (2026-10-01, head `88ade450689cd377ec9d90d358787bff269d070b`, branch `main`, event `push`); all four jobs passed:
 > `typecheck, lint, versions`; `tests and coverage floors`; `static export and design tokens`;
-> and `mutation testing`. This is the first fully green run on `main` in the repository's history.
+> and `mutation testing`. The first fully green run on `main` was `36803350157`.
 >
 > The two jobs that had been red were fixed rather than muted. `Coverage floors` failed on
 > `runtime.ts` at 94.63% lines against a 95% floor, and is closed with five behavioural tests
