@@ -3,13 +3,17 @@
 # WHY THIS FILE EXISTS
 #
 # Before this, the only workflow in the repo was `.github/workflows/deno.yml`,
-# which runs `deno lint` and `deno test -A` at the repository root. There are no
-# Deno tests in this repo, so that test step passes vacuously — and none of the
-# gates that actually define quality here (`typecheck`, `lint:ci`, `test:ci`,
-# `check:coverage`, `check:versions`, `build:prod`, `check:tokens`,
-# `check:mutations`) ran anywhere except on a developer's machine, enforced by
-# nothing but habit. A green check on a pull request therefore meant "deno lint
-# was happy", not "the app builds and its tests pass".
+# the stock `denoland/setup-deno` starter template. It was removed on 2026-10-01
+# rather than repaired: `deno lint` fails on 90 `no-node-globals` findings
+# (`process.env`, `Buffer`, `global` — all legitimate for a Next/Tauri app), and
+# `deno test -A` cannot resolve the `@/` alias because the root `deno.json` has
+# no `imports` map. Neither step could pass, and neither tested anything this
+# project relies on. Meanwhile none of the gates that actually define quality
+# here (`typecheck`, `lint:ci`, `test:ci`, `check:coverage`, `check:versions`,
+# `build:prod`, `check:tokens`, `check:mutations`) ran anywhere except on a
+# developer's machine, enforced by nothing but habit. A green check on a pull
+# request therefore meant "deno lint was happy", not "the app builds and its
+# tests pass".
 #
 # JOBS ARE THE PARALLELISM UNIT
 #
