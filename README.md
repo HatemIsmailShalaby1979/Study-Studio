@@ -80,7 +80,7 @@ and technically independent.
 Snapshot 2026-10-01. Locally re-measured (Jest with coverage, the version-manifest
 check, the static export and the design-token guard on Node 22.22.2 / npm 11.13.0,
 Windows x64) and cross-checked against CI run
-[`36799900588`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36799900588):
+[`36803350157`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803350157):
 
 | Check | Result | Source |
 | --- | --- | --- |
@@ -96,11 +96,11 @@ Windows x64) and cross-checked against CI run
 | Mutation testing (28 targeted mutations) | 28/28 caught | CI, 2026-10-01 |
 
 > [!IMPORTANT]
-> **CI is green on the current tree; `main` has not received it yet.** All four jobs passed on
-> run [`36799900588`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36799900588)
-> (2026-10-01, head `509908b`, branch `ci-verify-2026-10-01`, event `push`):
+> **CI is green on `main`.** All four jobs passed on
+> run [`36803350157`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803350157)
+> (2026-10-01, head `2947dfc`, branch `main`, event `push`):
 > `typecheck, lint, versions`; `tests and coverage floors`; `static export and design tokens`;
-> and `mutation testing`. This is the first fully green run in the repository's history.
+> and `mutation testing`. This is the first fully green run on `main` in the repository's history.
 >
 > The two jobs that had been red were fixed rather than muted. `Coverage floors` failed on
 > `runtime.ts` at 94.63% lines against a 95% floor, and is closed with five behavioural tests
@@ -111,10 +111,8 @@ Windows x64) and cross-checked against CI run
 > It was retargeted at the schema's own suite (`validation.test.ts`), where it fails fast and
 > deterministically. No floor was lowered and no mutation was deleted.
 >
-> The run above was on a verification branch, **not** `main`. `main` is still at `dbc370a`
-> (2026-09-28), whose last run failed at *Coverage floors* and *Mutation testing* — and the
-> badge at the top of this file tracks `main`, so it renders failing until these commits
-> reach it.
+> The 13 commits that produced this green run were promoted to `main` by a fast-forward push
+> (`dbc370a..2947dfc`). The badge at the top of this file tracks `main` and now renders green.
 
 > [!WARNING]
 > Live opt-in suites exist for LM Studio and Ollama (`LMSTUDIO_LIVE=1`, `OLLAMA_LIVE=1`); without those env vars CI stays hermetic. Generation needs a local model runtime. Audio export needs Piper voice files plus ffmpeg. On a clean machine with neither, the app will not produce lessons or audio. The mobile client was removed, and a hosted SaaS is not offered. No external audit, no certified data isolation, no signed security review, no revenue.
