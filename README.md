@@ -77,11 +77,13 @@ and technically independent.
 
 ## Production status & test coverage
 
-Snapshot 2026-10-01. The latest CI run on `main` is
+Snapshot 2026-10-02. The latest CI run on `main` is
+[`36960778059`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36960778059),
+head `8b46d645731d41d762b0ba40c09cb7eb8dec1056` — a docs-only commit, so the measured
+results below are unchanged from the preceding code run
 [`36803605646`](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/runs/36803605646),
-head `88ade450689cd377ec9d90d358787bff269d070b`. The test counts, coverage, and
-workflow results below are from that run's job logs; the latest full local measurement
-was also recorded on 2026-10-01:
+head `88ade450689cd377ec9d90d358787bff269d070b`; that run's job logs are the source for
+the test counts, coverage, and workflow results in the table below:
 
 | Check | Result | Source |
 | --- | --- | --- |
