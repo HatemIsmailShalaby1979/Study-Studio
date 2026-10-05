@@ -8,9 +8,9 @@
 [![CI](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions/workflows/CI/badge.svg)](https://github.com/HatemIsmailShalaby1979/Study-Studio/actions)
 ![licence](https://img.shields.io/badge/licence-MIT-blue)
 [![last commit](https://img.shields.io/github/last-commit/HatemIsmailShalaby1979/Study-Studio)](https://github.com/HatemIsmailShalaby1979/Study-Studio/commits/main)
-![status](https://img.shields.io/badge/ci-success-brightgreen?label=success%20(2026-10-02))
+![status](https://img.shields.io/badge/ci-in_progress-lightgrey?label=in_progress%20(2026-10-05))
 
-*Measured 2026-10-06 — CI **success**; head `b2799a3` (2026-10-02); TypeScript.*
+*Measured 2026-10-06 — CI **in_progress**; head `c5af998` (2026-10-05); TypeScript.*
 
 <!-- No static test or coverage count is shown here: a frozen
      number decays silently. Run the suite for a current figure;
